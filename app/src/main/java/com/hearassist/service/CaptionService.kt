@@ -40,7 +40,7 @@ import kotlinx.coroutines.withContext
 import kotlin.math.sqrt
 
 /**
- * 前台服务：录音 → VAD → (语音) Whisper 字幕 / (环境音开关开启时) 声音分类。
+ * 前台服务：录音 → VAD → (语音) SenseVoice 字幕 / (环境音开关开启时) 声音分类。
  * 使用 microphone 类型前台服务，保证后台持续收音。
  */
 class CaptionService : Service() {
@@ -53,6 +53,7 @@ class CaptionService : Service() {
     private var voiceprint: VoiceprintProcessor? = null
     private val sttMutex = Mutex()
     private val voiceprintMutex = Mutex()
+    private var agcEffect: AutomaticGainControl? = null
 
     // 环境音环形缓冲（最近 2 秒音频）
     private val envBuffer = FloatArray(ENV_BUFFER_SIZE)
@@ -86,6 +87,8 @@ class CaptionService : Service() {
         try { stt?.close() } catch (_: Exception) {}
         try { env?.close() } catch (_: Exception) {}
         try { voiceprint?.close() } catch (_: Exception) {}
+        try { agcEffect?.release() } catch (_: Exception) {}
+        agcEffect = null
         vad = null; stt = null; env = null; voiceprint = null
         super.onDestroy()
     }
@@ -208,7 +211,7 @@ class CaptionService : Service() {
     private fun enableHardwareAgc(rec: AudioRecord) {
         try {
             if (AutomaticGainControl.isAvailable()) {
-                AutomaticGainControl.create(rec.audioSessionId).setEnabled(true)
+                agcEffect = AutomaticGainControl.create(rec.audioSessionId).apply { setEnabled(true) }
             }
         } catch (_: Exception) {
         }

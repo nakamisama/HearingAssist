@@ -35,7 +35,8 @@ import kotlinx.coroutines.withContext
  */
 class VoiceprintActivity : AppCompatActivity() {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // Main dispatcher：协程里直接操作 UI（按钮状态、文本），避免跨线程崩溃
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private lateinit var viewList: View
     private lateinit var viewEnroll: View
@@ -238,23 +239,33 @@ class VoiceprintActivity : AppCompatActivity() {
         btnRetry.isEnabled = false
         btnCancel.isEnabled = false
         scope.launch {
-            val segments = recordSentence()
-            recording = false
-            btnRetry.isEnabled = true
-            btnCancel.isEnabled = true
-            if (segments.isEmpty()) {
-                tvStatus.text = getString(R.string.vp_no_speech)
-                return@launch
+            var proceedToNext = false
+            try {
+                val segments = recordSentence()
+                if (segments.isEmpty()) {
+                    tvStatus.text = getString(R.string.vp_no_speech)
+                    return@launch
+                }
+                collectedEmbeddings.addAll(segments)
+                sentenceIndex++
+                if (sentenceIndex >= sentences.size) {
+                    finishEnroll()
+                } else {
+                    delay(400)
+                    showSentence()
+                    proceedToNext = true
+                }
+            } catch (e: Exception) {
+                // 录制异常：不中断录入流程，允许用户重录
+            } finally {
+                // 仅在未进入下一句时复位标志和按钮（进入下一句时由 startRecordingSentence 接管）
+                if (!proceedToNext) {
+                    recording = false
+                    btnRetry.isEnabled = true
+                    btnCancel.isEnabled = true
+                }
             }
-            collectedEmbeddings.addAll(segments)
-            sentenceIndex++
-            if (sentenceIndex >= sentences.size) {
-                finishEnroll()
-            } else {
-                delay(400)
-                showSentence()
-                startRecordingSentence()
-            }
+            if (proceedToNext) startRecordingSentence()
         }
     }
 
