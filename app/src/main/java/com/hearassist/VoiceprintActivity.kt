@@ -78,6 +78,8 @@ class VoiceprintActivity : AppCompatActivity() {
     private var pendingClose: VoiceprintProcessor? = null
     // 录入期间暂停字幕服务以独占麦克风；记录原状态以便结束后恢复
     private var serviceWasRunning = false
+    // 录入代数令牌：取消/重新录入时递增，使旧的模型加载协程失效，避免竞态
+    private var enrollGeneration = 0
 
     private val recordAudioLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -216,6 +218,7 @@ class VoiceprintActivity : AppCompatActivity() {
         selectedChip = presetColors.indexOf(enrollColor).let { if (it < 0) 0 else it }
         sentenceIndex = 0
         collectedEmbeddings.clear()
+        val gen = ++enrollGeneration
 
         // 切到录入视图，先显示"加载模型"，避免主线程加载 28MB 模型卡死 UI
         viewList.visibility = View.GONE
@@ -234,8 +237,8 @@ class VoiceprintActivity : AppCompatActivity() {
             val processor = withContext(Dispatchers.IO) {
                 try { VoiceprintProcessor(assets) } catch (e: Exception) { null }
             }
-            // 加载期间若用户已退出录入（返回列表），关闭模型并放弃，避免后台继续录音
-            if (viewEnroll.visibility != View.VISIBLE) {
+            // 加载期间若用户已退出/重新发起录入（代数变化或不在录入界面），关闭模型并放弃
+            if (gen != enrollGeneration || viewEnroll.visibility != View.VISIBLE) {
                 try { processor?.close() } catch (_: Exception) {}
                 return@launch
             }
@@ -423,6 +426,7 @@ class VoiceprintActivity : AppCompatActivity() {
 
     private fun backToList() {
         recording = false
+        enrollGeneration++  // 使仍在加载模型的旧协程失效
         restoreServiceIfNeeded()
         showList()
         // 延迟关闭模型：等 IO 录音循环退出（每 32ms 检查 recording 标志），避免原生竞态崩溃

@@ -54,6 +54,8 @@ class CaptionService : Service() {
     private val sttMutex = Mutex()
     private val voiceprintMutex = Mutex()
     private var agcEffect: AutomaticGainControl? = null
+    // 防止服务未销毁时重复收到启动命令导致启动多套录音引擎
+    private var engineStarted = false
 
     // 环境音环形缓冲（最近 2 秒音频）
     private val envBuffer = FloatArray(ENV_BUFFER_SIZE)
@@ -72,13 +74,18 @@ class CaptionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         CaptionBus.setRunning(true)
         CaptionBus.setStatus(EngineStatus.LISTENING)
-        scope.launch { runEngine() }
+        // 仅首次启动引擎，避免重复 start 命令导致多套录音循环/模型
+        if (!engineStarted) {
+            engineStarted = true
+            scope.launch { runEngine() }
+        }
         return START_STICKY
     }
 
     override fun onDestroy() {
         CaptionBus.setRunning(false)
         CaptionBus.setStatus(EngineStatus.IDLE)
+        engineStarted = false
         scope.cancel()
         try { audioRecord?.stop() } catch (_: Exception) {}
         try { audioRecord?.release() } catch (_: Exception) {}

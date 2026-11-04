@@ -2,6 +2,7 @@ package com.hearassist.data
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 
 /**
  * 服务（后台识别）与界面（字幕显示）之间的共享状态。
@@ -43,10 +44,13 @@ object CaptionBus {
 
     fun addSubtitle(text: String, speaker: String? = null, color: Int = 0) {
         if (text.isBlank()) return
-        val list = _subtitles.value.toMutableList()
-        list.add(SubtitleLine(speaker, color, text))
-        if (list.size > MAX_LINES) list.removeAt(0)
-        _subtitles.value = list
+        // 原子更新：多个识别协程并发写入时避免互相覆盖导致丢字幕
+        _subtitles.update { current ->
+            val list = current.toMutableList()
+            list.add(SubtitleLine(speaker, color, text))
+            if (list.size > MAX_LINES) list.removeAt(0)
+            list
+        }
     }
 
     fun pushEnvEvent(name: String) { _envEvent.value = name }
