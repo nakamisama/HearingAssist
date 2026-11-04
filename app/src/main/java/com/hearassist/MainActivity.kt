@@ -257,8 +257,18 @@ class MainActivity : AppCompatActivity() {
                         if (!running) tvEnvAlert.visibility = View.GONE
                     }
                 }
-                launch { CaptionBus.subtitles.collect { renderSubtitles() } }
-                launch { CaptionBus.partial.collect { renderSubtitles() } }
+                launch { CaptionBus.subtitles.collect { renderSubtitles(true) } }
+                launch {
+                    var lastPartialRender = 0L
+                    CaptionBus.partial.collect { p ->
+                        val now = System.currentTimeMillis()
+                        // 预览节流刷新(200ms)、清空时立即刷新，避免整屏高频重绘导致闪烁
+                        if (p.isEmpty() || now - lastPartialRender >= 200) {
+                            lastPartialRender = now
+                            renderSubtitles(false)
+                        }
+                    }
+                }
                 launch {
                     CaptionBus.envEvent.collect { event ->
                         envAlertJob?.cancel()
@@ -277,8 +287,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 渲染已确认字幕（按说话人着色）+ 实时半句（高亮色，逐字刷新）。 */
-    private fun renderSubtitles() {
+    /** 渲染已确认字幕（按说话人着色）+ 实时半句（高亮色）。scrollToBottom 仅在新增定稿行时为 true，预览刷新不滚动防闪。 */
+    private fun renderSubtitles(scrollToBottom: Boolean = false) {
         // 启动中：显示加载提示，模型就绪后自动切换为正常字幕
         if (CaptionBus.status.value == EngineStatus.STARTING) {
             tvSubtitles.text = getString(R.string.starting_hint)
@@ -314,6 +324,8 @@ class MainActivity : AppCompatActivity() {
             }
             tvSubtitles.text = sb
         }
-        scrollSubtitles.post { scrollSubtitles.fullScroll(ScrollView.FOCUS_DOWN) }
+        if (scrollToBottom) {
+            scrollSubtitles.post { scrollSubtitles.fullScroll(ScrollView.FOCUS_DOWN) }
+        }
     }
 }

@@ -174,7 +174,6 @@ class CaptionService : Service() {
                 // 2) VAD 切出的完整语音段 → SenseVoice 定稿（准确+标点+声纹），两种模式相同
                 while (v.hasSegments()) {
                     val seg = v.nextSegment()
-                    if (asrMode == Settings.ASR_REALTIME) CaptionBus.setPartial("")
                     launchStt(seg.samples, seg.samples.size)
                 }
 
@@ -225,6 +224,8 @@ class CaptionService : Service() {
                         }
                     }
                     CaptionBus.addSubtitle(text, speaker, color)
+                    // 定稿行已上屏，此刻才清空逐字预览，避免"先清空再出字"的空窗闪烁
+                    CaptionBus.setPartial("")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "识别失败", e)
