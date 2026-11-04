@@ -56,4 +56,7 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // 繁体 → 简体中文转换（纯 Java 实现，无额外体积负担）
+    implementation("com.github.houbb:opencc4j:1.8.0")
 }

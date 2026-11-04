@@ -8,21 +8,21 @@
 
 | 功能 | 说明 |
 |------|------|
-| 实时字幕 | Silero VAD 切分语音 → Whisper tiny(int8) 离线识别 → 大字号屏幕显示 |
+| 实时字幕 | 软/硬件 AGC 增益 → Silero VAD 切分语音 → SenseVoice-small(int8) 离线识别 → OpenCC 转简体 → 大字号屏幕显示 |
 | 环境音识别 | 可开关（默认关闭）。检测门铃/警报/婴儿哭声等约 60 类声音，振动 + 高亮提示 |
 | 隐私 | 所有推理在手机本地完成，无任何网络请求 |
 
 ## 架构
 
 ```
-AudioRecord(16kHz/mono) → VAD(Silero, 0.6MB)
-                             ├─ 语音段 → Whisper tiny(int8) → 字幕（大字显示）
+AudioRecord(16kHz/mono, AGC) → VAD(Silero, 0.6MB)
+                             ├─ 语音段 → SenseVoice-small(int8) → 繁转简 → 字幕（大字显示）
                              └─ 非语音（开关开启时）→ Zipformer 音频打标 → 振动+提示
 ```
 
 - 引擎：[sherpa-onnx v2.0.1](https://github.com/k2-fsa/sherpa-onnx)（一个 AAR 同时提供 VAD / STT / 音频打标）
-- 模型在 CI 构建时自动下载并打进 APK，APK 约 110~130MB
-- 中文识别：Whisper tiny 多语言模型（`language=zh`）。中端机单句延迟约 1~3 秒，属正常水平
+- 模型在 CI 构建时自动下载并打进 APK，APK 约 300MB
+- 中文识别：SenseVoice-small（专为中文训练，自带标点），输出经 OpenCC 统一为简体
 
 ## 如何获得 APK（不需要本地安装任何开发环境）
 

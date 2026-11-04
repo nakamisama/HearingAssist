@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AutomaticGainControl
 import android.os.Build
 import android.os.IBinder
 import android.os.VibrationEffect
@@ -119,6 +120,7 @@ class CaptionService : Service() {
         }
         audioRecord = rec
         rec.startRecording()
+        enableHardwareAgc(rec)
 
         val shorts = ShortArray(windowSize)
         val floats = FloatArray(windowSize)
@@ -128,6 +130,7 @@ class CaptionService : Service() {
                 val n = rec.read(shorts, 0, shorts.size)  // 阻塞式读取，32ms 一帧
                 if (n <= 0) continue
                 for (i in 0 until n) floats[i] = shorts[i] / 32768f
+                applyAgc(floats)  // 远场/小声说话自动放大信号
                 val chunk = if (n == floats.size) floats else floats.copyOf(n)
 
                 val v = vad ?: break
@@ -172,6 +175,39 @@ class CaptionService : Service() {
             } finally {
                 CaptionBus.setStatus(EngineStatus.LISTENING)
             }
+        }
+    }
+
+    // ---------- 增益控制 ----------
+
+    /** 尝试开启系统级硬件 AGC（设备不支持则静默忽略） */
+    private fun enableHardwareAgc(rec: AudioRecord) {
+        try {
+            if (AutomaticGainControl.isAvailable(rec.audioSessionId)) {
+                AutomaticGainControl.create(rec.audioSessionId, true)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * 软件自动增益：目标把语音 RMS 归一到 0.06，最大放大 6 倍。
+     * 增益带平滑（时间常数约 0.2s），防止忽大忽小；硬限幅防削波。
+     */
+    private var agcGain = 1.0f
+
+    private fun applyAgc(samples: FloatArray) {
+        var sum = 0.0
+        for (s in samples) sum += s.toDouble() * s
+        val rms = sqrt(sum / samples.size).toFloat()
+        val desired = if (rms > 1e-4f) {
+            (AGC_TARGET_RMS / rms).coerceIn(1.0f, AGC_MAX_GAIN)
+        } else {
+            agcGain
+        }
+        agcGain = agcGain * 0.85f + desired * 0.15f
+        for (i in samples.indices) {
+            samples[i] = (samples[i] * agcGain).coerceIn(-0.98f, 0.98f)
         }
     }
 
@@ -268,5 +304,8 @@ class CaptionService : Service() {
         private const val ENV_EVERY_WINDOWS = 64         // 每 ~2 秒分类一次
         private const val NOISE_FLOOR = 0.005f
         private const val ALERT_COOLDOWN_MS = 60_000L
+
+        private const val AGC_TARGET_RMS = 0.06f
+        private const val AGC_MAX_GAIN = 6.0f
     }
 }

@@ -36,7 +36,7 @@ jobs:
       - name: Download models (VAD / Whisper tiny / 音频打标)
         run: |
           set -e
-          mkdir -p app/src/main/assets/models/whisper \
+          mkdir -p app/src/main/assets/models/sensevoice \
                    app/src/main/assets/models/audio_tagging
           TMP="$(mktemp -d)"
 
@@ -45,16 +45,14 @@ jobs:
             https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
           cp "$TMP/silero_vad.onnx" app/src/main/assets/models/
 
-          # Whisper tiny 多语言（int8 量化）
-          curl -fL --retry 3 -o "$TMP/whisper.tar.bz2" \
-            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-tiny.tar.bz2
-          mkdir "$TMP/whisper" && tar -xjf "$TMP/whisper.tar.bz2" -C "$TMP/whisper"
-          cp "$(find "$TMP/whisper" -name 'tiny-encoder.int8.onnx' | head -1)" \
-            app/src/main/assets/models/whisper/
-          cp "$(find "$TMP/whisper" -name 'tiny-decoder.int8.onnx' | head -1)" \
-            app/src/main/assets/models/whisper/
-          cp "$(find "$TMP/whisper" -name 'tiny-tokens.txt' | head -1)" \
-            app/src/main/assets/models/whisper/
+          # SenseVoice 中文识别模型（int8 量化，自带标点与数字归一化）
+          curl -fL --retry 3 -o "$TMP/sv.tar.bz2" \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2
+          mkdir "$TMP/sv" && tar -xjf "$TMP/sv.tar.bz2" -C "$TMP/sv"
+          cp "$(find "$TMP/sv" -name 'model.int8.onnx' | head -1)" \
+            app/src/main/assets/models/sensevoice/
+          cp "$(find "$TMP/sv" -name 'tokens.txt' | head -1)" \
+            app/src/main/assets/models/sensevoice/
 
           # 环境音分类模型（zipformer small, int8）
           curl -fL --retry 3 -o "$TMP/tagging.tar.bz2" \

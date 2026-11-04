@@ -17,10 +17,11 @@ class VadProcessor(assets: AssetManager) : AutoCloseable {
         VadModelConfig(
             sileroVadModelConfig = SileroVadModelConfig(
                 model = "models/silero_vad.onnx",
-                threshold = 0.5f,
+                // 阈值 0.35（默认 0.5）：小声说话、离麦克风稍远也能被检测到
+                threshold = 0.35f,
                 // 停顿 0.35 秒即认为一句话结束（比默认 0.25 略长，避免把停顿误切成两句）
                 minSilenceDuration = 0.35f,
-                minSpeechDuration = 0.25f,
+                minSpeechDuration = 0.2f,
                 // 单段最长 8 秒，保护 Whisper 不吃超长输入导致卡顿
                 maxSpeechDuration = 8.0f,
                 windowSize = WINDOW_SIZE,
