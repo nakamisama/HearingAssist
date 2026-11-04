@@ -23,8 +23,8 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # ubuntu-latest 已预装 Android SDK（ANDROID_HOME 已配置），
+      # 缺少的 platform/build-tools 由 AGP 自动下载，无需额外 setup 步骤
 
       - name: Download sherpa-onnx AAR (v2.0.1)
         run: |
@@ -70,7 +70,17 @@ jobs:
       - name: Build APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build-log.txt
+          exit ${PIPESTATUS[0]}
+
+      # 构建失败时上传完整日志，便于远程排错
+      - name: Upload build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build-log.txt
+          if-no-files-found: ignore
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
