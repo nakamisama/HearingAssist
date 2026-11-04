@@ -5,18 +5,18 @@
     android:background="@color/background"
     android:orientation="vertical">
 
-    <!-- 状态栏 -->
+    <!-- 状态栏（紧凑） -->
     <TextView
         android:id="@+id/tvStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingHorizontal="20dp"
-        android:paddingVertical="14dp"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="6dp"
         android:text="@string/status_idle"
         android:textColor="@color/text_secondary"
-        android:textSize="16sp" />
+        android:textSize="13sp" />
 
-    <!-- 字幕区：大字号、高对比，方便听障用户阅读 -->
+    <!-- 字幕区：大字号、高对比，占屏幕大部分（weight=1 自动填充剩余空间） -->
     <ScrollView
         android:id="@+id/scrollSubtitles"
         android:layout_width="match_parent"
@@ -37,154 +37,104 @@
             android:textSize="28sp" />
     </ScrollView>
 
-    <!-- 环境音提示条：检测到门铃/警报时弹出并振动 -->
+    <!-- 环境音提示条（紧凑，默认隐藏） -->
     <TextView
         android:id="@+id/tvEnvAlert"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="@color/env_alert"
-        android:paddingHorizontal="20dp"
-        android:paddingVertical="16dp"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="10dp"
         android:textColor="@color/env_alert_text"
-        android:textSize="22sp"
+        android:textSize="20sp"
         android:textStyle="bold"
         android:visibility="gone" />
 
-    <!-- 识别语言选择：自动 / 普通话 / 粤语 -->
+    <!-- 底部控制行：声纹/环境音/管理/语言 压缩成一行 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="@color/surface"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingHorizontal="20dp"
-        android:paddingVertical="10dp">
+        android:paddingVertical="8dp"
+        android:paddingHorizontal="12dp">
 
+        <!-- 声纹开关 -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:orientation="vertical">
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/lang_label"
-                android:textColor="@color/text_primary"
-                android:textSize="16sp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/lang_hint"
+                android:text="@string/vp_label_short"
                 android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
+                android:textSize="13sp" />
+
+            <Switch
+                android:id="@+id/swVoiceprint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="false" />
         </LinearLayout>
 
+        <!-- 环境音开关 -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/env_label_short"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <Switch
+                android:id="@+id/swEnvSound"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="false" />
+        </LinearLayout>
+
+        <!-- 声纹管理入口 -->
+        <Button
+            android:id="@+id/btnVoiceprintManage"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:backgroundTint="@android:color/transparent"
+            android:text="@string/vp_manage"
+            android:textColor="@color/accent"
+            android:textSize="13sp" />
+
+        <!-- 语言选择 -->
         <Spinner
             android:id="@+id/spnLang"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content" />
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:padding="4dp" />
     </LinearLayout>
 
-    <!-- 声纹识别开关 + 管理入口 -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="@color/surface"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingHorizontal="20dp"
-        android:paddingVertical="10dp">
-
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/vp_toggle_label"
-                android:textColor="@color/text_primary"
-                android:textSize="16sp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/vp_toggle_hint"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
-        </LinearLayout>
-
-        <Switch
-            android:id="@+id/swVoiceprint"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:checked="false" />
-    </LinearLayout>
-
-    <Button
-        android:id="@+id/btnVoiceprintManage"
-        android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:layout_marginHorizontal="20dp"
-        android:layout_marginTop="6dp"
-        android:backgroundTint="@color/surface"
-        android:text="@string/vp_manage"
-        android:textColor="@color/accent"
-        android:textSize="15sp" />
-
-    <!-- 环境音开关，默认关闭 -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="@color/surface"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingHorizontal="20dp"
-        android:paddingVertical="10dp">
-
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/env_sound_label"
-                android:textColor="@color/text_primary"
-                android:textSize="16sp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/env_sound_hint"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
-        </LinearLayout>
-
-        <Switch
-            android:id="@+id/swEnvSound"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:checked="false" />
-    </LinearLayout>
-
-    <!-- 主开关按钮 -->
+    <!-- 主开关按钮（紧凑） -->
     <Button
         android:id="@+id/btnMain"
         android:layout_width="match_parent"
-        android:layout_height="68dp"
+        android:layout_height="56dp"
         android:layout_marginHorizontal="20dp"
-        android:layout_marginTop="12dp"
-        android:layout_marginBottom="24dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="20dp"
         android:backgroundTint="@color/accent"
         android:text="@string/btn_start"
         android:textColor="#062733"
-        android:textSize="20sp"
+        android:textSize="18sp"
         android:textStyle="bold" />
 </LinearLayout>

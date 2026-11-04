@@ -70,9 +70,9 @@ class VoiceprintActivity : AppCompatActivity() {
     private val collectedEmbeddings = mutableListOf<FloatArray>()
     private var vp: VoiceprintProcessor? = null
 
-    private val permissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-            if (grants[Manifest.permission.RECORD_AUDIO] == true) {
+    private val recordAudioLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
                 startRecordingSentence()
             } else {
                 Toast.makeText(this, R.string.perm_needed, Toast.LENGTH_LONG).show()
@@ -230,7 +230,7 @@ class VoiceprintActivity : AppCompatActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
-            permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
+            recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
         recording = true

@@ -46,9 +46,9 @@ class MainActivity : AppCompatActivity() {
     private var pendingStart = false
     private var envAlertJob: Job? = null
 
-    private val permissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-            if (grants[Manifest.permission.RECORD_AUDIO] == true) {
+    private val recordAudioLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
                 if (pendingStart) startCaption()
             } else {
                 pendingStart = false
@@ -112,10 +112,8 @@ class MainActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
-        // 通知权限（API 33+，被拒绝也不影响功能，只是没有常驻通知）
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
-        }
+        // 通知权限不自动请求：避免与麦克风权限回调混淆导致误导性提示。
+        // 服务前台通知在用户授予通知权限后自动显示，不影响功能。
 
         observeState()
     }
@@ -132,7 +130,7 @@ class MainActivity : AppCompatActivity() {
                 android.content.pm.PackageManager.PERMISSION_GRANTED -> startCaption()
             else -> {
                 pendingStart = true
-                permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
+                recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
             }
         }
     }

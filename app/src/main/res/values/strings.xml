@@ -26,7 +26,9 @@
     <!-- 声纹 -->
     <string name="vp_toggle_label">声纹识别（字幕标注说话人）</string>
     <string name="vp_toggle_hint">录入家人声音后开启，字幕显示名字和颜色</string>
-    <string name="vp_manage">声纹管理</string>
+    <string name="vp_label_short">声纹</string>
+    <string name="env_label_short">环境音</string>
+    <string name="vp_manage">管理</string>
     <string name="vp_title">声纹管理</string>
     <string name="vp_add">添加说话人</string>
     <string name="vp_name_hint">请输入名字</string>
