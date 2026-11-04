@@ -2,11 +2,24 @@ package com.hearassist.data
 
 import android.content.Context
 
-/** 简单偏好存储：识别语言模式（0=自动 1=普通话）、声纹开关 */
+/** 简单偏好存储：识别语言模式、声纹开关、识别引擎模式 */
 object Settings {
     private const val PREFS = "hearassist_prefs"
     private const val KEY_LANG_MODE = "lang_mode"
     private const val KEY_VP_ENABLED = "vp_enabled"
+    private const val KEY_ASR_MODE = "asr_mode"
+
+    // 识别引擎：0=精准(SenseVoice整句) 1=实时(流式逐字)
+    const val ASR_ACCURATE = 0
+    const val ASR_REALTIME = 1
+
+    fun getAsrMode(ctx: Context): Int =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_ASR_MODE, ASR_ACCURATE)
+
+    fun setAsrMode(ctx: Context, mode: Int) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_ASR_MODE, mode).apply()
+    }
 
     fun getLangMode(ctx: Context): Int =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_LANG_MODE, 0)

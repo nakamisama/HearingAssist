@@ -38,7 +38,8 @@ jobs:
           set -e
           mkdir -p app/src/main/assets/models/sensevoice \
                    app/src/main/assets/models/audio_tagging \
-                   app/src/main/assets/models/voiceprint
+                   app/src/main/assets/models/voiceprint \
+                   app/src/main/assets/models/streaming
           TMP="$(mktemp -d)"
 
           # VAD 模型（0.6MB）
@@ -54,6 +55,15 @@ jobs:
             app/src/main/assets/models/sensevoice/
           cp "$(find "$TMP/sv" -name 'tokens.txt' | head -1)" \
             app/src/main/assets/models/sensevoice/
+
+          # 流式实时识别模型（streaming-zipformer-small-ctc-zh int8, 约21MB，逐字出字）
+          curl -fL --retry 3 -o "$TMP/st.tar.bz2" \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01.tar.bz2
+          mkdir "$TMP/st" && tar -xjf "$TMP/st.tar.bz2" -C "$TMP/st"
+          cp "$(find "$TMP/st" -name 'model.int8.onnx' | head -1)" \
+            app/src/main/assets/models/streaming/
+          cp "$(find "$TMP/st" -name 'tokens.txt' | head -1)" \
+            app/src/main/assets/models/streaming/
 
           # 环境音分类模型（zipformer small, int8）
           curl -fL --retry 3 -o "$TMP/tagging.tar.bz2" \

@@ -1,10 +1,12 @@
 <resources>
     <string name="app_name">随声字幕</string>
     <string name="status_idle">待机</string>
+    <string name="status_starting">启动中…</string>
     <string name="status_listening">监听中…</string>
     <string name="status_recognizing">识别中…</string>
-    <string name="btn_start">开始收听</string>
-    <string name="btn_stop">停止收听</string>
+    <string name="btn_start">点击开始</string>
+    <string name="btn_stop">点击停止</string>
+    <string name="starting_hint">启动中，请稍后…\n模型加载完成后自动开始</string>
     <string name="env_sound_label">环境音识别（门铃 / 警报 / 婴儿哭声等）</string>
     <string name="env_sound_hint">开启后，检测到门铃、警报等声音时会振动并提示</string>
     <string name="lang_label">识别语言</string>
@@ -31,9 +33,13 @@
     <string name="vp_manage">管理</string>
     <string name="vp_manage_full">管理声纹（录入 / 删除）</string>
     <string name="settings_title">设置</string>
-    <string name="cast_button">📺 投屏到电视</string>
-    <string name="cast_hint">使用系统无线投屏，把字幕画面镜像到电视（需电视支持投屏，且与手机连同一 WiFi）</string>
-    <string name="cast_unavailable">未找到系统投屏入口，请从手机控制中心手动开启"无线投屏"</string>
+    <string name="engine_label">识别引擎</string>
+    <string name="engine_hint">精准=整句更准；实时=边说边逐字出</string>
+
+    <string-array name="engine_options">
+        <item>精准模式</item>
+        <item>实时模式</item>
+    </string-array>
     <string name="vp_title">声纹管理</string>
     <string name="vp_add">添加说话人</string>
     <string name="vp_name_hint">请输入名字</string>

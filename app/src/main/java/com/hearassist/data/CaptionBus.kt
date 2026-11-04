@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.update
  * 服务（后台识别）与界面（字幕显示）之间的共享状态。
  * 单例 + StateFlow，避免引入额外的架构依赖。
  */
-enum class EngineStatus { IDLE, LISTENING, RECOGNIZING }
+enum class EngineStatus { IDLE, STARTING, LISTENING, RECOGNIZING }
 
 object CaptionBus {
 
@@ -23,6 +23,11 @@ object CaptionBus {
 
     private val _subtitles = MutableStateFlow(listOf<SubtitleLine>())
     val subtitles: StateFlow<List<SubtitleLine>> = _subtitles
+
+    /** 实时模式下当前未说完的半句（逐字刷新），空串表示无 */
+    private val _partial = MutableStateFlow("")
+    val partial: StateFlow<String> = _partial
+    fun setPartial(t: String) { _partial.value = t }
 
     /** 最近检测到的环境音事件（如“门铃”），null 表示无 */
     private val _envEvent = MutableStateFlow<String?>(null)

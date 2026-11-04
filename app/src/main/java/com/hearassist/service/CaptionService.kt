@@ -21,6 +21,7 @@ import androidx.core.app.NotificationCompat
 import com.hearassist.MainActivity
 import com.hearassist.R
 import com.hearassist.audio.EnvSoundProcessor
+import com.hearassist.audio.StreamingProcessor
 import com.hearassist.audio.SttProcessor
 import com.hearassist.audio.VadProcessor
 import com.hearassist.audio.VoiceprintProcessor
@@ -49,8 +50,13 @@ class CaptionService : Service() {
     private var audioRecord: AudioRecord? = null
     private var vad: VadProcessor? = null
     private var stt: SttProcessor? = null
+    private var streaming: StreamingProcessor? = null
     private var env: EnvSoundProcessor? = null
     private var voiceprint: VoiceprintProcessor? = null
+    private var asrMode = Settings.ASR_ACCURATE
+    // 实时模式下最近一个 VAD 段识别出的说话人（用于给流式文本标注）
+    private var currentSpeaker: String? = null
+    private var currentColor = 0
     private val sttMutex = Mutex()
     private val voiceprintMutex = Mutex()
     private var agcEffect: AutomaticGainControl? = null
@@ -73,10 +79,10 @@ class CaptionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         CaptionBus.setRunning(true)
-        CaptionBus.setStatus(EngineStatus.LISTENING)
         // 仅首次启动引擎，避免重复 start 命令导致多套录音循环/模型
         if (!engineStarted) {
             engineStarted = true
+            CaptionBus.setStatus(EngineStatus.STARTING)
             scope.launch { runEngine() }
         }
         return START_STICKY
@@ -92,11 +98,13 @@ class CaptionService : Service() {
         audioRecord = null
         try { vad?.close() } catch (_: Exception) {}
         try { stt?.close() } catch (_: Exception) {}
+        try { streaming?.close() } catch (_: Exception) {}
         try { env?.close() } catch (_: Exception) {}
         try { voiceprint?.close() } catch (_: Exception) {}
         try { agcEffect?.release() } catch (_: Exception) {}
         agcEffect = null
-        vad = null; stt = null; env = null; voiceprint = null
+        vad = null; stt = null; streaming = null; env = null; voiceprint = null
+        CaptionBus.setPartial("")
         super.onDestroy()
     }
 
@@ -104,8 +112,14 @@ class CaptionService : Service() {
 
     private suspend fun runEngine() = withContext(Dispatchers.Default) {
         try {
+            asrMode = Settings.getAsrMode(this@CaptionService)
             vad = VadProcessor(assets)
-            stt = SttProcessor(assets, Settings.getLangMode(this@CaptionService))
+            // 按模式加载识别引擎：精准=SenseVoice整句，实时=流式逐字（只载其一，省内存）
+            if (asrMode == Settings.ASR_REALTIME) {
+                streaming = StreamingProcessor(assets)
+            } else {
+                stt = SttProcessor(assets, Settings.getLangMode(this@CaptionService))
+            }
             // 环境音模型仅在开关开启时加载，节省 ~30MB 内存与启动时间
             if (CaptionBus.envEnabled.value) env = EnvSoundProcessor(assets)
             // 声纹模型仅在开关开启且已录入声纹时加载
@@ -118,6 +132,8 @@ class CaptionService : Service() {
             stopSelf()
             return@withContext
         }
+        // 模型加载完成，自动开始收听
+        CaptionBus.setStatus(EngineStatus.LISTENING)
         audioLoop()
     }
 
@@ -159,10 +175,29 @@ class CaptionService : Service() {
                 // 1) VAD 调度：有人说话 → 切段；否则 → 环境音缓冲
                 v.accept(chunk)
 
-                // 2) VAD 切出的完整语音段，交给识别引擎（异步，不阻塞录音）
+                // 2) VAD 切出的完整语音段
                 while (v.hasSegments()) {
                     val seg = v.nextSegment()
-                    launchStt(seg.samples, seg.samples.size)
+                    if (asrMode == Settings.ASR_REALTIME) {
+                        // 实时模式：VAD 段只用于声纹标注，文本由流式引擎产出
+                        updateSpeakerFromSegment(seg.samples)
+                    } else {
+                        launchStt(seg.samples, seg.samples.size)
+                    }
+                }
+
+                // 2.5) 实时模式：流式逐字识别（边说边出字）
+                if (asrMode == Settings.ASR_REALTIME) {
+                    val s = streaming
+                    if (s != null) {
+                        val finalized = s.accept(chunk)
+                        if (finalized != null) {
+                            CaptionBus.addSubtitle(finalized, currentSpeaker, currentColor)
+                            CaptionBus.setPartial("")
+                        } else {
+                            CaptionBus.setPartial(s.partial())
+                        }
+                    }
                 }
 
                 // 3) 环境音识别（开关开启时）
@@ -210,6 +245,16 @@ class CaptionService : Service() {
                 CaptionBus.setStatus(EngineStatus.LISTENING)
             }
         }
+    }
+
+    /** 实时模式：从 VAD 语音段提取声纹，记录当前说话人，供流式文本标注。 */
+    private suspend fun updateSpeakerFromSegment(samples: FloatArray) {
+        val vp = voiceprint ?: return
+        if (samples.size < VoiceprintProcessor.MIN_SEGMENT_SAMPLES) return
+        val emb = voiceprintMutex.withLock { vp.extract(samples) } ?: return
+        val name = vp.search(emb)
+        currentSpeaker = name
+        currentColor = if (name != null) vp.colorOf(name) else 0
     }
 
     // ---------- 增益控制 ----------

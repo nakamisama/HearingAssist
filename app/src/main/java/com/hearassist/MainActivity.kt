@@ -90,7 +90,7 @@ class MainActivity : AppCompatActivity() {
         val swEnvSound = view.findViewById<Switch>(R.id.swEnvSound)
         val btnManage = view.findViewById<Button>(R.id.btnVoiceprintManage)
         val spnLang = view.findViewById<Spinner>(R.id.spnLang)
-        val btnCast = view.findViewById<Button>(R.id.btnCast)
+        val spnEngine = view.findViewById<Spinner>(R.id.spnEngine)
 
         // 声纹：先设初始状态再挂监听，避免初始化触发回调
         swVoiceprint.isChecked = Settings.isVoiceprintEnabled(this)
@@ -130,26 +130,23 @@ class MainActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
-        btnCast.setOnClickListener { openCastSettings() }
+        // 识别引擎：精准(SenseVoice整句) / 实时(流式逐字)
+        val engineLabels = resources.getStringArray(R.array.engine_options)
+        spnEngine.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, engineLabels)
+        spnEngine.setSelection(Settings.getAsrMode(this))
+        spnEngine.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) {
+                if (position != Settings.getAsrMode(this@MainActivity)) {
+                    Settings.setAsrMode(this@MainActivity, position)
+                    Toast.makeText(this@MainActivity, R.string.lang_restarted, Toast.LENGTH_SHORT).show()
+                    restartServiceIfRunning()
+                }
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
 
         dialog.show()
-    }
-
-    /** 打开系统无线投屏设置。投屏本身由系统 Miracast 完成，把整个手机画面（含字幕）镜像到电视。 */
-    private fun openCastSettings() {
-        // 不同厂商入口 action 略有差异，逐个尝试
-        val actions = listOf(
-            "android.settings.WIFI_DISPLAY_SETTINGS",
-            "android.settings.CAST_SETTINGS",
-        )
-        for (action in actions) {
-            try {
-                startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                return
-            } catch (_: Exception) {
-            }
-        }
-        Toast.makeText(this, R.string.cast_unavailable, Toast.LENGTH_LONG).show()
     }
 
     // ---------- 权限与服务 ----------
@@ -190,16 +187,18 @@ class MainActivity : AppCompatActivity() {
                     CaptionBus.status.collect { status ->
                         tvStatus.text = when (status) {
                             EngineStatus.IDLE -> getString(R.string.status_idle)
+                            EngineStatus.STARTING -> getString(R.string.status_starting)
                             EngineStatus.LISTENING -> getString(R.string.status_listening)
                             EngineStatus.RECOGNIZING -> getString(R.string.status_recognizing)
                         }
                         tvStatus.setTextColor(
-                            if (status == EngineStatus.RECOGNIZING)
+                            if (status == EngineStatus.RECOGNIZING || status == EngineStatus.STARTING)
                                 getColor(R.color.accent) else getColor(R.color.text_secondary)
                         )
                         btnMain.text = getString(
                             if (CaptionBus.running.value) R.string.btn_stop else R.string.btn_start
                         )
+                        renderSubtitles()
                     }
                 }
                 launch {
@@ -214,30 +213,8 @@ class MainActivity : AppCompatActivity() {
                         if (!running) tvEnvAlert.visibility = View.GONE
                     }
                 }
-                launch {
-                    CaptionBus.subtitles.collect { lines ->
-                        if (lines.isEmpty()) {
-                            tvSubtitles.text = getString(R.string.initial_hint)
-                        } else {
-                            // 每条字幕用说话人颜色渲染（名字+文字整行着色）
-                            val sb = SpannableStringBuilder()
-                            lines.forEachIndexed { i, line ->
-                                if (i > 0) sb.append("\n")
-                                val start = sb.length
-                                if (line.speaker != null) sb.append("${line.speaker}：")
-                                sb.append(line.text)
-                                val color = if (line.color != 0) line.color else getColor(R.color.text_primary)
-                                sb.setSpan(
-                                    ForegroundColorSpan(color),
-                                    start, sb.length,
-                                    android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-                                )
-                            }
-                            tvSubtitles.text = sb
-                        }
-                        scrollSubtitles.post { scrollSubtitles.fullScroll(ScrollView.FOCUS_DOWN) }
-                    }
-                }
+                launch { CaptionBus.subtitles.collect { renderSubtitles() } }
+                launch { CaptionBus.partial.collect { renderSubtitles() } }
                 launch {
                     CaptionBus.envEvent.collect { event ->
                         envAlertJob?.cancel()
@@ -254,5 +231,45 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /** 渲染已确认字幕（按说话人着色）+ 实时半句（高亮色，逐字刷新）。 */
+    private fun renderSubtitles() {
+        // 启动中：显示加载提示，模型就绪后自动切换为正常字幕
+        if (CaptionBus.status.value == EngineStatus.STARTING) {
+            tvSubtitles.text = getString(R.string.starting_hint)
+            return
+        }
+        val lines = CaptionBus.subtitles.value
+        val partial = CaptionBus.partial.value
+        if (lines.isEmpty() && partial.isEmpty()) {
+            tvSubtitles.text = getString(R.string.initial_hint)
+        } else {
+            val sb = SpannableStringBuilder()
+            lines.forEachIndexed { i, line ->
+                if (i > 0) sb.append("\n")
+                val start = sb.length
+                if (line.speaker != null) sb.append("${line.speaker}：")
+                sb.append(line.text)
+                val color = if (line.color != 0) line.color else getColor(R.color.text_primary)
+                sb.setSpan(
+                    ForegroundColorSpan(color),
+                    start, sb.length,
+                    android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+            if (partial.isNotEmpty()) {
+                if (sb.isNotEmpty()) sb.append("\n")
+                val start = sb.length
+                sb.append(partial)
+                sb.setSpan(
+                    ForegroundColorSpan(getColor(R.color.accent)),
+                    start, sb.length,
+                    android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+            tvSubtitles.text = sb
+        }
+        scrollSubtitles.post { scrollSubtitles.fullScroll(ScrollView.FOCUS_DOWN) }
     }
 }
