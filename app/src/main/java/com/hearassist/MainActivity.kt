@@ -9,6 +9,7 @@ import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.ImageButton
 import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.Switch
@@ -20,12 +21,13 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.hearassist.audio.SttProcessor
 import com.hearassist.data.CaptionBus
 import com.hearassist.data.EngineStatus
 import com.hearassist.data.Settings
 import com.hearassist.data.VoiceprintStore
 import com.hearassist.service.CaptionService
-import com.hearassist.audio.SttProcessor
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -36,10 +38,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvSubtitles: TextView
     private lateinit var tvEnvAlert: TextView
     private lateinit var scrollSubtitles: ScrollView
-    private lateinit var swEnvSound: Switch
-    private lateinit var spnLang: Spinner
-    private lateinit var swVoiceprint: Switch
-    private lateinit var btnVoiceprintManage: Button
+    private lateinit var btnSettings: ImageButton
     private lateinit var btnMain: Button
 
     private var pendingStart = false
@@ -63,10 +62,7 @@ class MainActivity : AppCompatActivity() {
         tvSubtitles = findViewById(R.id.tvSubtitles)
         tvEnvAlert = findViewById(R.id.tvEnvAlert)
         scrollSubtitles = findViewById(R.id.scrollSubtitles)
-        swEnvSound = findViewById(R.id.swEnvSound)
-        spnLang = findViewById(R.id.spnLang)
-        swVoiceprint = findViewById(R.id.swVoiceprint)
-        btnVoiceprintManage = findViewById(R.id.btnVoiceprintManage)
+        btnSettings = findViewById(R.id.btnSettings)
         btnMain = findViewById(R.id.btnMain)
 
         btnMain.setOnClickListener {
@@ -77,28 +73,49 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        swEnvSound.setOnCheckedChangeListener { _, checked ->
-            CaptionBus.setEnvEnabled(checked)
-        }
+        btnSettings.setOnClickListener { showSettingsDialog() }
 
+        observeState()
+    }
+
+    // ---------- 设置面板（底部弹出） ----------
+
+    private fun showSettingsDialog() {
+        val dialog = BottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.dialog_settings, null)
+        dialog.setContentView(view)
+
+        val swVoiceprint = view.findViewById<Switch>(R.id.swVoiceprint)
+        val swEnvSound = view.findViewById<Switch>(R.id.swEnvSound)
+        val btnManage = view.findViewById<Button>(R.id.btnVoiceprintManage)
+        val spnLang = view.findViewById<Spinner>(R.id.spnLang)
+
+        // 声纹：先设初始状态再挂监听，避免初始化触发回调
+        swVoiceprint.isChecked = Settings.isVoiceprintEnabled(this)
+        swVoiceprint.isEnabled = VoiceprintStore.load(this).isNotEmpty()
         swVoiceprint.setOnCheckedChangeListener { _, checked ->
             Settings.setVoiceprintEnabled(this, checked)
             restartServiceIfRunning()
         }
 
-        btnVoiceprintManage.setOnClickListener {
+        btnManage.setOnClickListener {
+            dialog.dismiss()
             startActivity(Intent(this, VoiceprintActivity::class.java))
         }
 
-        // 识别语言选择：自动 / 普通话（切换后自动重启服务生效）
+        // 环境音
+        swEnvSound.isChecked = CaptionBus.envEnabled.value
+        swEnvSound.setOnCheckedChangeListener { _, checked ->
+            CaptionBus.setEnvEnabled(checked)
+        }
+
+        // 识别语言
         val langLabels = resources.getStringArray(R.array.lang_options)
-        val langModes = intArrayOf(
-            SttProcessor.LANG_AUTO, SttProcessor.LANG_ZH
-        )
+        val langModes = intArrayOf(SttProcessor.LANG_AUTO, SttProcessor.LANG_ZH)
         spnLang.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, langLabels)
         spnLang.setSelection(Settings.getLangMode(this))
         spnLang.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+            override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) {
                 val mode = langModes[position]
                 if (mode != Settings.getLangMode(this@MainActivity)) {
                     Settings.setLangMode(this@MainActivity, mode)
@@ -111,17 +128,10 @@ class MainActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
-        // 通知权限不自动请求：避免与麦克风权限回调混淆导致误导性提示。
-        // 服务前台通知在用户授予通知权限后自动显示，不影响功能。
-
-        observeState()
+        dialog.show()
     }
 
-    override fun onResume() {
-        super.onResume()
-        // 未录入声纹时禁用声纹开关
-        swVoiceprint.isEnabled = VoiceprintStore.load(this).isNotEmpty()
-    }
+    // ---------- 权限与服务 ----------
 
     private fun ensurePermissionThenStart() {
         when {
@@ -139,7 +149,7 @@ class MainActivity : AppCompatActivity() {
         ContextCompat.startForegroundService(this, Intent(this, CaptionService::class.java))
     }
 
-    /** 语言切换后重启服务使新语言生效（等旧服务释放模型再启动） */
+    /** 设置变更后重启服务使其生效（等旧服务释放模型再启动） */
     private fun restartServiceIfRunning() {
         if (!CaptionBus.running.value) return
         stopService(Intent(this, CaptionService::class.java))
@@ -149,6 +159,8 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.startForegroundService(this@MainActivity, Intent(this@MainActivity, CaptionService::class.java))
         }
     }
+
+    // ---------- 状态观察 ----------
 
     private fun observeState() {
         lifecycleScope.launch {
@@ -172,7 +184,7 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     CaptionBus.running.collect { running ->
                         btnMain.text = getString(if (running) R.string.btn_stop else R.string.btn_start)
-                        if (!running) tvEnvAlert.visibility = android.view.View.GONE
+                        if (!running) tvEnvAlert.visibility = View.GONE
                     }
                 }
                 launch {
@@ -204,10 +216,10 @@ class MainActivity : AppCompatActivity() {
                         envAlertJob?.cancel()
                         if (event != null) {
                             tvEnvAlert.text = event
-                            tvEnvAlert.visibility = android.view.View.VISIBLE
+                            tvEnvAlert.visibility = View.VISIBLE
                             envAlertJob = launch {
                                 delay(4000)
-                                tvEnvAlert.visibility = android.view.View.GONE
+                                tvEnvAlert.visibility = View.GONE
                                 CaptionBus.clearEnvEvent()
                             }
                         }

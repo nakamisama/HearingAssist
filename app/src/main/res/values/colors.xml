@@ -7,5 +7,6 @@
     <color name="env_alert">#FFB300</color>
     <color name="env_alert_text">#1A1200</color>
     <color name="danger">#EF5350</color>
+    <color name="divider">#2A3038</color>
     <color name="ic_launcher_background">#0E1116</color>
 </resources>
