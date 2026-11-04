@@ -8,6 +8,7 @@ import android.media.MediaRecorder
 import android.os.Bundle
 import android.text.InputType
 import android.view.View
+import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
@@ -123,11 +124,7 @@ class VoiceprintActivity : AppCompatActivity() {
         lvSpeakers.adapter = object : ArrayAdapter<VoiceprintProcessor.SpeakerEntry>(
             this, R.layout.activity_voiceprint_item, entries
         ) {
-            override fun getView(
-                position: Int,
-                convertView: View?,
-                parent: android.view.ViewGroup?,
-            ): View {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val view =
                     convertView ?: layoutInflater.inflate(R.layout.activity_voiceprint_item, parent, false)
                 val entry = entries[position]
