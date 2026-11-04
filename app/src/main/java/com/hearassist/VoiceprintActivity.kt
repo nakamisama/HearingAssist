@@ -170,6 +170,18 @@ class VoiceprintActivity : AppCompatActivity() {
     // ---------- 录入流程（指定句子朗读） ----------
 
     private fun startEnroll(name: String) {
+        // 先确认模型文件存在，避免原生层加载缺失模型时崩溃
+        val modelPresent = try {
+            assets.open(VoiceprintProcessor.MODEL_PATH).close()
+            true
+        } catch (e: Exception) {
+            false
+        }
+        if (!modelPresent) {
+            Toast.makeText(this, "声纹模型缺失，请更新到最新版 App", Toast.LENGTH_LONG).show()
+            return
+        }
+
         enrollName = name
         enrollColor = presetColors[VoiceprintStore.load(this).size % presetColors.size]
         selectedChip = presetColors.indexOf(enrollColor).let { if (it < 0) 0 else it }

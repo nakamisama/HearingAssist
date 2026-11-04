@@ -65,9 +65,11 @@ jobs:
             app/src/main/assets/models/audio_tagging/
 
           # 声纹模型（3D-Speaker CAM++ 中文，28.3MB，单文件直下）
+          # 注意：必须保存为代码中 VoiceprintProcessor.MODEL_PATH 指定的文件名，否则加载崩溃
           curl -fL --retry 3 -o "$TMP/vp.onnx" \
             https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx
-          cp "$TMP/vp.onnx" app/src/main/assets/models/voiceprint/
+          cp "$TMP/vp.onnx" \
+            app/src/main/assets/models/voiceprint/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx
 
           du -sh app/src/main/assets/models/*
 

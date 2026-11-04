@@ -30,7 +30,7 @@ class VoiceprintProcessor(
     private val extractor = SpeakerEmbeddingExtractor(
         assets,
         SpeakerEmbeddingExtractorConfig(
-            model = "models/voiceprint/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx",
+            model = MODEL_PATH,
             numThreads = 1,
             provider = "cpu",
         ),
@@ -88,6 +88,9 @@ class VoiceprintProcessor(
     }
 
     companion object {
+        // 声纹模型在 assets 中的路径（CI 必须以此文件名保存，否则加载崩溃）
+        const val MODEL_PATH = "models/voiceprint/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx"
+
         // 余弦相似度阈值：CAM++ 同人样本相似度通常 >0.6，异人 <0.4
         // 0.5 为官方示例值，实测后可调
         const val THRESHOLD = 0.5f
