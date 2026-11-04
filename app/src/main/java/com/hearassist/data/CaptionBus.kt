@@ -28,6 +28,12 @@ object CaptionBus {
     private val _envEnabled = MutableStateFlow(false)
     val envEnabled: StateFlow<Boolean> = _envEnabled
 
+    /** 识别语言模式：0=自动 1=普通话 2=粤语 */
+    private val _langMode = MutableStateFlow(0)
+    val langMode: StateFlow<Int> = _langMode
+
+    fun setLangMode(v: Int) { _langMode.value = v }
+
     fun setRunning(v: Boolean) { _running.value = v }
     fun setStatus(v: EngineStatus) { _status.value = v }
     fun setEnvEnabled(v: Boolean) { _envEnabled.value = v }

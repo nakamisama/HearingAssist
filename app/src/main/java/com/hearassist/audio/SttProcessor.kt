@@ -9,10 +9,13 @@ import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
 
 /**
  * SenseVoice-small（int8 量化）离线语音识别封装。
- * 专为中文优化，准确率远高于 Whisper tiny，自带标点与数字归一化（"两点三十" → "2:30"），
- * 输出再经 OpenCC 统一转为简体中文。完全在手机本地推理，不联网。
+ * 同一模型原生支持普通话与粤语（以及英日韩）：
+ *   - language=""  自动识别（模型内置语种判断）
+ *   - language="zh" 普通话
+ *   - language="yue" 粤语
+ * 输出再经 OpenCC 统一为简体中文。完全在手机本地推理，不联网。
  */
-class SttProcessor(assets: AssetManager) : AutoCloseable {
+class SttProcessor(assets: AssetManager, langMode: Int = LANG_AUTO) : AutoCloseable {
 
     private val recognizer = OfflineRecognizer(
         assets,
@@ -20,7 +23,7 @@ class SttProcessor(assets: AssetManager) : AutoCloseable {
             modelConfig = OfflineModelConfig(
                 senseVoice = OfflineSenseVoiceModelConfig(
                     model = "models/sensevoice/model.int8.onnx",
-                    language = "zh",
+                    language = languageCode(langMode),
                     useInverseTextNormalization = true,
                 ),
                 tokens = "models/sensevoice/tokens.txt",
@@ -44,4 +47,16 @@ class SttProcessor(assets: AssetManager) : AutoCloseable {
     }
 
     override fun close() = recognizer.release()
+
+    companion object {
+        const val LANG_AUTO = 0
+        const val LANG_ZH = 1
+        const val LANG_YUE = 2
+
+        fun languageCode(mode: Int): String = when (mode) {
+            LANG_ZH -> "zh"
+            LANG_YUE -> "yue"
+            else -> ""  // 空 = 模型自动识别语种
+        }
+    }
 }

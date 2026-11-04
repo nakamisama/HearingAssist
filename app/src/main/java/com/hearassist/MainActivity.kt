@@ -4,8 +4,12 @@ import android.Manifest
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.view.View
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -17,7 +21,9 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.hearassist.data.CaptionBus
 import com.hearassist.data.EngineStatus
+import com.hearassist.data.Settings
 import com.hearassist.service.CaptionService
+import com.hearassist.audio.SttProcessor
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -29,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvEnvAlert: TextView
     private lateinit var scrollSubtitles: ScrollView
     private lateinit var swEnvSound: Switch
+    private lateinit var spnLang: Spinner
     private lateinit var btnMain: Button
 
     private var pendingStart = false
@@ -53,6 +60,7 @@ class MainActivity : AppCompatActivity() {
         tvEnvAlert = findViewById(R.id.tvEnvAlert)
         scrollSubtitles = findViewById(R.id.scrollSubtitles)
         swEnvSound = findViewById(R.id.swEnvSound)
+        spnLang = findViewById(R.id.spnLang)
         btnMain = findViewById(R.id.btnMain)
 
         btnMain.setOnClickListener {
@@ -65,6 +73,27 @@ class MainActivity : AppCompatActivity() {
 
         swEnvSound.setOnCheckedChangeListener { _, checked ->
             CaptionBus.setEnvEnabled(checked)
+        }
+
+        // 识别语言选择：自动 / 普通话 / 粤语（切换后自动重启服务生效）
+        val langLabels = resources.getStringArray(R.array.lang_options)
+        val langModes = intArrayOf(
+            SttProcessor.LANG_AUTO, SttProcessor.LANG_ZH, SttProcessor.LANG_YUE
+        )
+        spnLang.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, langLabels)
+        spnLang.setSelection(Settings.getLangMode(this))
+        spnLang.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val mode = langModes[position]
+                if (mode != Settings.getLangMode(this@MainActivity)) {
+                    Settings.setLangMode(this@MainActivity, mode)
+                    CaptionBus.setLangMode(mode)
+                    Toast.makeText(this@MainActivity, R.string.lang_restarted, Toast.LENGTH_SHORT).show()
+                    restartServiceIfRunning()
+                }
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
         // 通知权限（API 33+，被拒绝也不影响功能，只是没有常驻通知）
@@ -89,6 +118,17 @@ class MainActivity : AppCompatActivity() {
     private fun startCaption() {
         pendingStart = false
         ContextCompat.startForegroundService(this, Intent(this, CaptionService::class.java))
+    }
+
+    /** 语言切换后重启服务使新语言生效（等旧服务释放模型再启动） */
+    private fun restartServiceIfRunning() {
+        if (!CaptionBus.running.value) return
+        stopService(Intent(this, CaptionService::class.java))
+        lifecycleScope.launch {
+            delay(800)
+            if (CaptionBus.running.value) return@launch
+            ContextCompat.startForegroundService(this@MainActivity, Intent(this@MainActivity, CaptionService::class.java))
+        }
     }
 
     private fun observeState() {

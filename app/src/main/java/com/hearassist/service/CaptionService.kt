@@ -25,6 +25,7 @@ import com.hearassist.audio.SttProcessor
 import com.hearassist.audio.VadProcessor
 import com.hearassist.data.CaptionBus
 import com.hearassist.data.EngineStatus
+import com.hearassist.data.Settings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -89,7 +90,7 @@ class CaptionService : Service() {
     private suspend fun runEngine() = withContext(Dispatchers.Default) {
         try {
             vad = VadProcessor(assets)
-            stt = SttProcessor(assets)
+            stt = SttProcessor(assets, Settings.getLangMode(this))
             // 环境音模型仅在开关开启时加载，节省 ~30MB 内存与启动时间
             if (CaptionBus.envEnabled.value) env = EnvSoundProcessor(assets)
         } catch (e: Exception) {
