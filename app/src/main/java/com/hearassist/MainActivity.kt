@@ -2,6 +2,7 @@ package com.hearassist
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
@@ -17,6 +18,7 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -29,9 +31,14 @@ import com.hearassist.data.EngineStatus
 import com.hearassist.data.Settings
 import com.hearassist.data.VoiceprintStore
 import com.hearassist.service.CaptionService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : AppCompatActivity() {
 
@@ -77,6 +84,43 @@ class MainActivity : AppCompatActivity() {
         btnSettings.setOnClickListener { showSettingsDialog() }
 
         observeState()
+        checkForUpdate()
+    }
+
+    /** 打开 App 时检测 GitHub 最新版本，若有新版弹窗提示更新（离线时静默跳过）。 */
+    private fun checkForUpdate() {
+        lifecycleScope.launch {
+            val tag = withContext(Dispatchers.IO) {
+                try {
+                    val conn = URL("https://api.github.com/repos/nakamisama/HearingAssist/releases/latest")
+                        .openConnection() as HttpURLConnection
+                    conn.connectTimeout = 5000
+                    conn.readTimeout = 5000
+                    conn.setRequestProperty("User-Agent", "HearingAssist")
+                    if (conn.responseCode == 200) {
+                        JSONObject(conn.inputStream.bufferedReader().readText()).optString("tag_name", "")
+                    } else ""
+                } catch (e: Exception) {
+                    ""
+                }
+            }
+            val latest = tag.removePrefix("build-").toIntOrNull() ?: return@launch
+            if (latest > BuildConfig.VERSION_CODE && !isFinishing) {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle(R.string.update_title)
+                    .setMessage(getString(R.string.update_message, latest))
+                    .setPositiveButton(R.string.update_now) { _, _ ->
+                        try {
+                            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(
+                                "https://github.com/nakamisama/HearingAssist/releases/download/build-$latest/app-release.apk")))
+                        } catch (_: Exception) {
+                            Toast.makeText(this@MainActivity, R.string.update_fail, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                    .setNegativeButton(R.string.update_later, null)
+                    .show()
+            }
+        }
     }
 
     // ---------- 设置面板（底部弹出） ----------

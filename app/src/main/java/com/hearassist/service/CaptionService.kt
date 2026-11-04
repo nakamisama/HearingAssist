@@ -54,9 +54,6 @@ class CaptionService : Service() {
     private var env: EnvSoundProcessor? = null
     private var voiceprint: VoiceprintProcessor? = null
     private var asrMode = Settings.ASR_ACCURATE
-    // 实时模式下最近一个 VAD 段识别出的说话人（用于给流式文本标注）
-    private var currentSpeaker: String? = null
-    private var currentColor = 0
     private val sttMutex = Mutex()
     private val voiceprintMutex = Mutex()
     private var agcEffect: AutomaticGainControl? = null
@@ -114,12 +111,11 @@ class CaptionService : Service() {
         try {
             asrMode = Settings.getAsrMode(this@CaptionService)
             vad = VadProcessor(assets)
-            // 按模式加载识别引擎：精准=SenseVoice整句，实时=流式逐字（只载其一，省内存）
+            // 实时模式额外加载流式引擎做逐字预览；最终定稿两种模式都用 SenseVoice（准确+标点）
             if (asrMode == Settings.ASR_REALTIME) {
                 streaming = StreamingProcessor(assets)
-            } else {
-                stt = SttProcessor(assets, Settings.getLangMode(this@CaptionService))
             }
+            stt = SttProcessor(assets, Settings.getLangMode(this@CaptionService))
             // 环境音模型仅在开关开启时加载，节省 ~30MB 内存与启动时间
             if (CaptionBus.envEnabled.value) env = EnvSoundProcessor(assets)
             // 声纹模型仅在开关开启且已录入声纹时加载
@@ -175,28 +171,19 @@ class CaptionService : Service() {
                 // 1) VAD 调度：有人说话 → 切段；否则 → 环境音缓冲
                 v.accept(chunk)
 
-                // 2) VAD 切出的完整语音段
+                // 2) VAD 切出的完整语音段 → SenseVoice 定稿（准确+标点+声纹），两种模式相同
                 while (v.hasSegments()) {
                     val seg = v.nextSegment()
-                    if (asrMode == Settings.ASR_REALTIME) {
-                        // 实时模式：VAD 段只用于声纹标注，文本由流式引擎产出
-                        updateSpeakerFromSegment(seg.samples)
-                    } else {
-                        launchStt(seg.samples, seg.samples.size)
-                    }
+                    if (asrMode == Settings.ASR_REALTIME) CaptionBus.setPartial("")
+                    launchStt(seg.samples, seg.samples.size)
                 }
 
-                // 2.5) 实时模式：流式逐字识别（边说边出字）
+                // 2.5) 实时模式：流式逐字预览（边说边蹦字），定稿后由 SenseVoice 替换为准确文本
                 if (asrMode == Settings.ASR_REALTIME) {
                     val s = streaming
                     if (s != null) {
-                        val finalized = s.accept(chunk)
-                        if (finalized != null) {
-                            CaptionBus.addSubtitle(finalized, currentSpeaker, currentColor)
-                            CaptionBus.setPartial("")
-                        } else {
-                            CaptionBus.setPartial(s.partial())
-                        }
+                        s.accept(chunk)
+                        CaptionBus.setPartial(s.partial())
                     }
                 }
 
@@ -245,16 +232,6 @@ class CaptionService : Service() {
                 CaptionBus.setStatus(EngineStatus.LISTENING)
             }
         }
-    }
-
-    /** 实时模式：从 VAD 语音段提取声纹，记录当前说话人，供流式文本标注。 */
-    private suspend fun updateSpeakerFromSegment(samples: FloatArray) {
-        val vp = voiceprint ?: return
-        if (samples.size < VoiceprintProcessor.MIN_SEGMENT_SAMPLES) return
-        val emb = voiceprintMutex.withLock { vp.extract(samples) } ?: return
-        val name = vp.search(emb)
-        currentSpeaker = name
-        currentColor = if (name != null) vp.colorOf(name) else 0
     }
 
     // ---------- 增益控制 ----------

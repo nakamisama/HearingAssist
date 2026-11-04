@@ -46,6 +46,11 @@ android {
         jvmTarget = "17"
     }
 
+    buildFeatures {
+        // 生成 BuildConfig.VERSION_CODE，用于新版本检测对比
+        buildConfig = true
+    }
+
     packaging {
         // sherpa-onnx 原生库不做压缩，加载更快
         jniLibs {

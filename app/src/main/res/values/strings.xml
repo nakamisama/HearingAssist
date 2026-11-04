@@ -33,8 +33,14 @@
     <string name="vp_manage">管理</string>
     <string name="vp_manage_full">管理声纹（录入 / 删除）</string>
     <string name="settings_title">设置</string>
+    <string name="update_title">发现新版本</string>
+    <string name="update_message">有新版本（build-%1$d）可用，是否更新？</string>
+    <string name="update_now">立即更新</string>
+    <string name="update_later">暂不</string>
+    <string name="update_fail">无法打开下载链接，请手动到 GitHub  releases 页下载</string>
+
     <string name="engine_label">识别引擎</string>
-    <string name="engine_hint">精准=整句更准；实时=边说边逐字出</string>
+    <string name="engine_hint">精准=整句显示；实时=逐字预览+说完自动精准标点</string>
 
     <string-array name="engine_options">
         <item>精准模式</item>
