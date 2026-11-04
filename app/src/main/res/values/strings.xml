@@ -41,6 +41,7 @@
     <string name="vp_color_label">选择颜色（字幕显示用）</string>
     <string name="vp_step">第 %1$d / %2$d 句</string>
     <string name="vp_recording_hint">请朗读这句话</string>
+    <string name="vp_loading_model">正在加载声纹模型…</string>
     <string name="vp_recording">正在聆听…</string>
     <string name="vp_no_speech">没有检测到语音，请点击重录</string>
     <string name="vp_retry">重录本句</string>

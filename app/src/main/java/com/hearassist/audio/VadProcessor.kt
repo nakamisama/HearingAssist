@@ -22,8 +22,9 @@ class VadProcessor(assets: AssetManager) : AutoCloseable {
                 // 停顿 0.4 秒认为一句话结束：容忍长句中的自然停顿，避免句子被切碎
                 minSilenceDuration = 0.4f,
                 minSpeechDuration = 0.2f,
-                // 单段最长 15 秒：长句不再被硬切（原 8s 会把长句切成两段导致识别破碎）
-                maxSpeechDuration = 15.0f,
+                // 单段最长 8 秒：平衡识别完整度与字幕响应速度。
+                // 连续说话无停顿时最多等 8 秒出字幕（15s 会导致字幕延迟过久）
+                maxSpeechDuration = 8.0f,
                 windowSize = WINDOW_SIZE,
             ),
             sampleRate = SAMPLE_RATE,

@@ -2,6 +2,7 @@ package com.hearassist
 
 import android.Manifest
 import android.app.AlertDialog
+import android.content.Intent
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -21,7 +22,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.hearassist.audio.VadProcessor
 import com.hearassist.audio.VoiceprintProcessor
+import com.hearassist.data.CaptionBus
 import com.hearassist.data.VoiceprintStore
+import com.hearassist.service.CaptionService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -66,10 +69,14 @@ class VoiceprintActivity : AppCompatActivity() {
     private var enrollName = ""
     private var enrollColor = 0
     private var sentenceIndex = 0
-    private var recording = false
+    @Volatile private var recording = false
     private var selectedChip = 0
     private val collectedEmbeddings = mutableListOf<FloatArray>()
     private var vp: VoiceprintProcessor? = null
+    // 退出录入后延迟关闭的旧模型（等 IO 录音循环先退出，避免原生竞态）
+    private var pendingClose: VoiceprintProcessor? = null
+    // 录入期间暂停字幕服务以独占麦克风；记录原状态以便结束后恢复
+    private var serviceWasRunning = false
 
     private val recordAudioLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -107,8 +114,27 @@ class VoiceprintActivity : AppCompatActivity() {
     override fun onDestroy() {
         scope.cancel()
         try { vp?.close() } catch (_: Exception) {}
+        try { pendingClose?.close() } catch (_: Exception) {}
         vp = null
+        pendingClose = null
+        // 兜底：若录入中直接退出，恢复字幕服务
+        if (serviceWasRunning) {
+            serviceWasRunning = false
+            try {
+                ContextCompat.startForegroundService(this, Intent(this, CaptionService::class.java))
+            } catch (_: Exception) {}
+        }
         super.onDestroy()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        // 录入中按返回键 → 回到列表（并恢复服务），而不是直接退出
+        if (viewEnroll.visibility == View.VISIBLE) {
+            backToList()
+        } else {
+            super.onBackPressed()
+        }
     }
 
     // ---------- 列表模式 ----------
@@ -187,18 +213,58 @@ class VoiceprintActivity : AppCompatActivity() {
         selectedChip = presetColors.indexOf(enrollColor).let { if (it < 0) 0 else it }
         sentenceIndex = 0
         collectedEmbeddings.clear()
-        try {
-            vp = VoiceprintProcessor(assets)
-        } catch (e: Exception) {
-            Toast.makeText(this, "声纹模型加载失败", Toast.LENGTH_SHORT).show()
-            backToList()
-            return
-        }
+
+        // 切到录入视图，先显示"加载模型"，避免主线程加载 28MB 模型卡死 UI
         viewList.visibility = View.GONE
         viewEnroll.visibility = View.VISIBLE
         buildColorChips()
-        showSentence()
-        startRecordingSentence()
+        tvSentence.text = ""
+        tvStep.text = ""
+        tvStatus.text = getString(R.string.vp_loading_model)
+        btnRetry.isEnabled = false
+        btnCancel.isEnabled = false
+
+        // 暂停字幕服务，把麦克风让给录入
+        pauseServiceForEnrollment()
+
+        // 后台线程加载声纹模型，加载完成再进入朗读
+        scope.launch {
+            val processor = withContext(Dispatchers.IO) {
+                try { VoiceprintProcessor(assets) } catch (e: Exception) { null }
+            }
+            // 加载期间若用户已退出录入（返回列表），关闭模型并放弃，避免后台继续录音
+            if (viewEnroll.visibility != View.VISIBLE) {
+                try { processor?.close() } catch (_: Exception) {}
+                return@launch
+            }
+            if (processor == null) {
+                Toast.makeText(this@VoiceprintActivity, "声纹模型加载失败", Toast.LENGTH_SHORT).show()
+                backToList()
+                return@launch
+            }
+            vp = processor
+            btnCancel.isEnabled = true
+            showSentence()
+            startRecordingSentence()
+        }
+    }
+
+    /** 录入前暂停字幕服务，独占麦克风，避免录不到声音 */
+    private fun pauseServiceForEnrollment() {
+        if (CaptionBus.running.value) {
+            serviceWasRunning = true
+            stopService(Intent(this, CaptionService::class.java))
+        }
+    }
+
+    /** 录入结束/取消后恢复字幕服务（若之前在运行） */
+    private fun restoreServiceIfNeeded() {
+        if (serviceWasRunning) {
+            serviceWasRunning = false
+            try {
+                ContextCompat.startForegroundService(this, Intent(this, CaptionService::class.java))
+            } catch (_: Exception) {}
+        }
     }
 
     private fun buildColorChips() {
@@ -268,7 +334,8 @@ class VoiceprintActivity : AppCompatActivity() {
                     proceedToNext = true
                 }
             } catch (e: Exception) {
-                // 录制异常：不中断录入流程，允许用户重录
+                // 录制异常：更新状态提示重录，避免一直停留在"正在聆听…"误导用户
+                tvStatus.text = getString(R.string.vp_no_speech)
             } finally {
                 // 仅在未进入下一句时复位标志和按钮（进入下一句时由 startRecordingSentence 接管）
                 if (!proceedToNext) {
@@ -281,7 +348,7 @@ class VoiceprintActivity : AppCompatActivity() {
         }
     }
 
-    /** 录制一句指定的话：VAD 切段 → 提取声纹，最多收集 2 段 */
+    /** 录制一句指定的话：VAD 切段 → 提取声纹；读完（1.2s 无新语音）即进入下一句 */
     private suspend fun recordSentence(): List<FloatArray> = withContext(Dispatchers.IO) {
         val extractor = vp ?: return@withContext emptyList()
         val vad = VadProcessor(assets)
@@ -304,17 +371,26 @@ class VoiceprintActivity : AppCompatActivity() {
         val shorts = ShortArray(VadProcessor.WINDOW_SIZE)
         val floats = FloatArray(VadProcessor.WINDOW_SIZE)
         try {
-            val deadline = System.currentTimeMillis() + 25_000
-            while (segments.size < 2 && System.currentTimeMillis() < deadline) {
+            val deadline = System.currentTimeMillis() + 20_000
+            var lastSegmentTime = 0L
+            while (System.currentTimeMillis() < deadline) {
+                if (!recording) break  // 用户取消/退出 → 立即停止录音
                 val n = rec.read(shorts, 0, shorts.size)
                 if (n <= 0) continue
                 for (i in 0 until n) floats[i] = shorts[i] / 32768f
                 vad.accept(floats)
-                while (vad.hasSegments() && segments.size < 2) {
+                while (vad.hasSegments()) {
                     val seg = vad.nextSegment()
                     val emb = extractor.extract(seg.samples)
-                    if (emb != null) segments.add(emb)
+                    if (emb != null) {
+                        segments.add(emb)
+                        lastSegmentTime = System.currentTimeMillis()
+                    }
                 }
+                // 已采到声纹且之后 1.2 秒无新语音 → 本句读完，立即进入下一句（不再傻等超时）
+                if (segments.isNotEmpty() && lastSegmentTime > 0 &&
+                    System.currentTimeMillis() - lastSegmentTime > 1200) break
+                if (segments.size >= 3) break
             }
         } finally {
             try { rec.stop() } catch (_: Exception) {}
@@ -334,14 +410,23 @@ class VoiceprintActivity : AppCompatActivity() {
         VoiceprintStore.save(this, all)
         try { vp?.close() } catch (_: Exception) {}
         vp = null
+        restoreServiceIfNeeded()
         Toast.makeText(this, R.string.vp_enroll_success, Toast.LENGTH_SHORT).show()
         finish()
     }
 
     private fun backToList() {
         recording = false
-        try { vp?.close() } catch (_: Exception) {}
-        vp = null
+        restoreServiceIfNeeded()
         showList()
+        // 延迟关闭模型：等 IO 录音循环退出（每 32ms 检查 recording 标志），避免原生竞态崩溃
+        pendingClose = vp
+        vp = null
+        scope.launch {
+            delay(500)
+            val p = pendingClose
+            pendingClose = null
+            try { p?.close() } catch (_: Exception) {}
+        }
     }
 }
