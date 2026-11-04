@@ -8,13 +8,12 @@
     <string name="env_sound_label">环境音识别（门铃 / 警报 / 婴儿哭声等）</string>
     <string name="env_sound_hint">开启后，检测到门铃、警报等声音时会振动并提示</string>
     <string name="lang_label">识别语言</string>
-    <string name="lang_hint">说粤语请选“粤语”，其余场景建议“自动”</string>
+    <string name="lang_hint">川渝话等接近普通话的方言建议选“普通话”</string>
     <string name="lang_restarted">语言已切换，正在重新收听</string>
 
     <string-array name="lang_options">
         <item>自动识别</item>
         <item>普通话</item>
-        <item>粤语</item>
     </string-array>
     <string name="notif_channel">收听服务</string>
     <string name="notif_title">随声字幕正在运行</string>

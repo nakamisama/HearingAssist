@@ -9,10 +9,8 @@ import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
 
 /**
  * SenseVoice-small（int8 量化）离线语音识别封装。
- * 同一模型原生支持普通话与粤语（以及英日韩）：
- *   - language=""  自动识别（模型内置语种判断）
- *   - language="zh" 普通话
- *   - language="yue" 粤语
+ * 支持普通话模式与自动识别模式；中文模型训练数据含方言混合，
+ * 对西南官话（川渝话）等接近普通话的方言有一定识别能力。
  * 输出再经 OpenCC 统一为简体中文。完全在手机本地推理，不联网。
  */
 class SttProcessor(assets: AssetManager, langMode: Int = LANG_AUTO) : AutoCloseable {
@@ -51,11 +49,9 @@ class SttProcessor(assets: AssetManager, langMode: Int = LANG_AUTO) : AutoClosea
     companion object {
         const val LANG_AUTO = 0
         const val LANG_ZH = 1
-        const val LANG_YUE = 2
 
         fun languageCode(mode: Int): String = when (mode) {
             LANG_ZH -> "zh"
-            LANG_YUE -> "yue"
             else -> ""  // 空 = 模型自动识别语种
         }
     }

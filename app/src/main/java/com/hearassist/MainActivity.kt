@@ -75,10 +75,10 @@ class MainActivity : AppCompatActivity() {
             CaptionBus.setEnvEnabled(checked)
         }
 
-        // 识别语言选择：自动 / 普通话 / 粤语（切换后自动重启服务生效）
+        // 识别语言选择：自动 / 普通话（切换后自动重启服务生效）
         val langLabels = resources.getStringArray(R.array.lang_options)
         val langModes = intArrayOf(
-            SttProcessor.LANG_AUTO, SttProcessor.LANG_ZH, SttProcessor.LANG_YUE
+            SttProcessor.LANG_AUTO, SttProcessor.LANG_ZH
         )
         spnLang.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, langLabels)
         spnLang.setSelection(Settings.getLangMode(this))

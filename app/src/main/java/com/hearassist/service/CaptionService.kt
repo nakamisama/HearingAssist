@@ -90,7 +90,7 @@ class CaptionService : Service() {
     private suspend fun runEngine() = withContext(Dispatchers.Default) {
         try {
             vad = VadProcessor(assets)
-            stt = SttProcessor(assets, Settings.getLangMode(this))
+            stt = SttProcessor(assets, Settings.getLangMode(this@CaptionService))
             // 环境音模型仅在开关开启时加载，节省 ~30MB 内存与启动时间
             if (CaptionBus.envEnabled.value) env = EnvSoundProcessor(assets)
         } catch (e: Exception) {
