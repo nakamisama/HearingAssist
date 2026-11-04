@@ -74,7 +74,8 @@ jobs:
       - name: Build APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build-log.txt
+          ./gradlew assembleRelease --no-daemon --stacktrace \
+            -PappVersionCode=${{ github.run_number }} 2>&1 | tee build-log.txt
           exit ${PIPESTATUS[0]}
 
       # 构建失败时上传完整日志，便于远程排错

@@ -11,19 +11,30 @@ android {
         applicationId = "com.hearassist"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        // 版本号由 CI 传入（GitHub run number），每次构建自动递增，保证可覆盖更新
+        versionCode = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 1
+        versionName = "1.1.0"
         // 荣耀 X50 是 arm64；保留 32 位 armeabi-v7a 以兼容更老的机型
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
     }
 
+    // 固定 release 签名：密钥提交在仓库根目录，所有构建用同一密钥，
+    // 保证 APK 可直接覆盖更新（个人自用 App，密钥公开无安全风险）
+    signingConfigs {
+        create("release") {
+            storeFile = rootProject.file("release.keystore")
+            storePassword = "hearassist2026"
+            keyAlias = "hearassist"
+            keyPassword = "hearassist2026"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // MVP 阶段用 debug 签名，APK 无需自签名即可直接安装
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
