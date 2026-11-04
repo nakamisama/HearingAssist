@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background"
+    android:orientation="vertical">
+
+    <!-- 状态栏 -->
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="20dp"
+        android:paddingVertical="14dp"
+        android:text="@string/status_idle"
+        android:textColor="@color/text_secondary"
+        android:textSize="16sp" />
+
+    <!-- 字幕区：大字号、高对比，方便听障用户阅读 -->
+    <ScrollView
+        android:id="@+id/scrollSubtitles"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <TextView
+            android:id="@+id/tvSubtitles"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="bottom"
+            android:lineSpacingMultiplier="1.35"
+            android:paddingHorizontal="24dp"
+            android:paddingVertical="16dp"
+            android:text="@string/initial_hint"
+            android:textColor="@color/text_primary"
+            android:textSize="28sp" />
+    </ScrollView>
+
+    <!-- 环境音提示条：检测到门铃/警报时弹出并振动 -->
+    <TextView
+        android:id="@+id/tvEnvAlert"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/env_alert"
+        android:paddingHorizontal="20dp"
+        android:paddingVertical="16dp"
+        android:textColor="@color/env_alert_text"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
+    <!-- 环境音开关，默认关闭 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/surface"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="20dp"
+        android:paddingVertical="10dp">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/env_sound_label"
+                android:textColor="@color/text_primary"
+                android:textSize="16sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/env_sound_hint"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <Switch
+            android:id="@+id/swEnvSound"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:checked="false" />
+    </LinearLayout>
+
+    <!-- 主开关按钮 -->
+    <Button
+        android:id="@+id/btnMain"
+        android:layout_width="match_parent"
+        android:layout_height="68dp"
+        android:layout_marginHorizontal="20dp"
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="24dp"
+        android:backgroundTint="@color/accent"
+        android:text="@string/btn_start"
+        android:textColor="#062733"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+</LinearLayout>

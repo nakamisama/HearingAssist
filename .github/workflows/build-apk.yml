@@ -1,0 +1,94 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Download sherpa-onnx AAR (v2.0.1)
+        run: |
+          mkdir -p app/libs
+          curl -fL --retry 3 -o app/libs/sherpa-onnx-2.0.1.aar \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-2.0.1.aar
+          ls -la app/libs/
+
+      - name: Download models (VAD / Whisper tiny / 音频打标)
+        run: |
+          set -e
+          mkdir -p app/src/main/assets/models/whisper \
+                   app/src/main/assets/models/audio_tagging
+          TMP="$(mktemp -d)"
+
+          # VAD 模型（0.6MB）
+          curl -fL --retry 3 -o "$TMP/silero_vad.onnx" \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+          cp "$TMP/silero_vad.onnx" app/src/main/assets/models/
+
+          # Whisper tiny 多语言（int8 量化）
+          curl -fL --retry 3 -o "$TMP/whisper.tar.bz2" \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-tiny.tar.bz2
+          mkdir "$TMP/whisper" && tar -xjf "$TMP/whisper.tar.bz2" -C "$TMP/whisper"
+          cp "$(find "$TMP/whisper" -name 'tiny-encoder.int8.onnx' | head -1)" \
+            app/src/main/assets/models/whisper/
+          cp "$(find "$TMP/whisper" -name 'tiny-decoder.int8.onnx' | head -1)" \
+            app/src/main/assets/models/whisper/
+          cp "$(find "$TMP/whisper" -name 'tiny-tokens.txt' | head -1)" \
+            app/src/main/assets/models/whisper/
+
+          # 环境音分类模型（zipformer small, int8）
+          curl -fL --retry 3 -o "$TMP/tagging.tar.bz2" \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/audio-tagging-models/sherpa-onnx-zipformer-small-audio-tagging-2024-04-15.tar.bz2
+          mkdir "$TMP/tagging" && tar -xjf "$TMP/tagging.tar.bz2" -C "$TMP/tagging"
+          cp "$(find "$TMP/tagging" -name 'model.int8.onnx' | head -1)" \
+            app/src/main/assets/models/audio_tagging/
+          cp "$(find "$TMP/tagging" -name 'class_labels_indices.csv' | head -1)" \
+            app/src/main/assets/models/audio_tagging/
+
+          du -sh app/src/main/assets/models/*
+
+      - name: Build APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HearingAssist-APK
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      # 每次推送自动发布一个 Release，方便手机/浏览器直接下载
+      - name: Publish to GitHub Releases
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: 自动构建 #${{ github.run_number }}
+          files: app/build/outputs/apk/release/*.apk
+          body: |
+            每次推送 main 自动构建的 APK。
+            下载 app-release.apk 安装即可（无需签名验证，已用 debug 签名）。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

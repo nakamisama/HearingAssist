@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">随声字幕</string>
+    <string name="status_idle">待机</string>
+    <string name="status_listening">监听中…</string>
+    <string name="status_recognizing">识别中…</string>
+    <string name="btn_start">开始收听</string>
+    <string name="btn_stop">停止收听</string>
+    <string name="env_sound_label">环境音识别（门铃 / 警报 / 婴儿哭声等）</string>
+    <string name="env_sound_hint">开启后，检测到门铃、警报等声音时会振动并提示</string>
+    <string name="notif_channel">收听服务</string>
+    <string name="notif_title">随声字幕正在运行</string>
+    <string name="notif_text">正在把周围的声音转成文字</string>
+    <string name="perm_needed">需要麦克风权限才能把声音转成文字</string>
+    <string name="grant">去授权</string>
+    <string name="initial_hint">对方说的话会实时显示在这里</string>
+    <string name="env_detecting">正在监听环境音…</string>
+</resources>
