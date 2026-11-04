@@ -31,6 +31,9 @@
     <string name="vp_manage">管理</string>
     <string name="vp_manage_full">管理声纹（录入 / 删除）</string>
     <string name="settings_title">设置</string>
+    <string name="cast_button">📺 投屏到电视</string>
+    <string name="cast_hint">使用系统无线投屏，把字幕画面镜像到电视（需电视支持投屏，且与手机连同一 WiFi）</string>
+    <string name="cast_unavailable">未找到系统投屏入口，请从手机控制中心手动开启"无线投屏"</string>
     <string name="vp_title">声纹管理</string>
     <string name="vp_add">添加说话人</string>
     <string name="vp_name_hint">请输入名字</string>

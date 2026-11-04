@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
 import android.view.View
+import android.view.WindowManager
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -89,6 +90,7 @@ class MainActivity : AppCompatActivity() {
         val swEnvSound = view.findViewById<Switch>(R.id.swEnvSound)
         val btnManage = view.findViewById<Button>(R.id.btnVoiceprintManage)
         val spnLang = view.findViewById<Spinner>(R.id.spnLang)
+        val btnCast = view.findViewById<Button>(R.id.btnCast)
 
         // 声纹：先设初始状态再挂监听，避免初始化触发回调
         swVoiceprint.isChecked = Settings.isVoiceprintEnabled(this)
@@ -128,7 +130,26 @@ class MainActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
+        btnCast.setOnClickListener { openCastSettings() }
+
         dialog.show()
+    }
+
+    /** 打开系统无线投屏设置。投屏本身由系统 Miracast 完成，把整个手机画面（含字幕）镜像到电视。 */
+    private fun openCastSettings() {
+        // 不同厂商入口 action 略有差异，逐个尝试
+        val actions = listOf(
+            "android.settings.WIFI_DISPLAY_SETTINGS",
+            "android.settings.CAST_SETTINGS",
+        )
+        for (action in actions) {
+            try {
+                startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return
+            } catch (_: Exception) {
+            }
+        }
+        Toast.makeText(this, R.string.cast_unavailable, Toast.LENGTH_LONG).show()
     }
 
     // ---------- 权限与服务 ----------
@@ -184,6 +205,12 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     CaptionBus.running.collect { running ->
                         btnMain.text = getString(if (running) R.string.btn_stop else R.string.btn_start)
+                        // 收听时保持屏幕常亮，避免手机放一边当字幕屏时自动锁屏；停止后恢复正常休眠
+                        if (running) {
+                            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        } else {
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        }
                         if (!running) tvEnvAlert.visibility = View.GONE
                     }
                 }
