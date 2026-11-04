@@ -222,7 +222,6 @@ class VoiceprintActivity : AppCompatActivity() {
         tvStep.text = ""
         tvStatus.text = getString(R.string.vp_loading_model)
         btnRetry.isEnabled = false
-        btnCancel.isEnabled = false
 
         // 暂停字幕服务，把麦克风让给录入
         pauseServiceForEnrollment()
@@ -243,7 +242,6 @@ class VoiceprintActivity : AppCompatActivity() {
                 return@launch
             }
             vp = processor
-            btnCancel.isEnabled = true
             showSentence()
             startRecordingSentence()
         }
@@ -315,11 +313,13 @@ class VoiceprintActivity : AppCompatActivity() {
         recording = true
         tvStatus.text = getString(R.string.vp_recording)
         btnRetry.isEnabled = false
-        btnCancel.isEnabled = false
+        // 取消按钮全程可用，用户随时可退出录入
         scope.launch {
             var proceedToNext = false
             try {
                 val segments = recordSentence()
+                // 录音期间用户已取消（返回列表）→ 不再继续录入
+                if (viewEnroll.visibility != View.VISIBLE) return@launch
                 if (segments.isEmpty()) {
                     tvStatus.text = getString(R.string.vp_no_speech)
                     return@launch
@@ -330,6 +330,8 @@ class VoiceprintActivity : AppCompatActivity() {
                     finishEnroll()
                 } else {
                     delay(400)
+                    // 句间间隙用户也可能取消 → 再次确认仍在录入界面
+                    if (viewEnroll.visibility != View.VISIBLE) return@launch
                     showSentence()
                     proceedToNext = true
                 }
@@ -337,11 +339,11 @@ class VoiceprintActivity : AppCompatActivity() {
                 // 录制异常：更新状态提示重录，避免一直停留在"正在聆听…"误导用户
                 tvStatus.text = getString(R.string.vp_no_speech)
             } finally {
-                // 仅在未进入下一句时复位标志和按钮（进入下一句时由 startRecordingSentence 接管）
+                // 无论是否进入下一句都必须复位 recording，
+                // 否则下一句 startRecordingSentence 会被开头的 if(recording) return 挡住导致卡住
+                recording = false
                 if (!proceedToNext) {
-                    recording = false
                     btnRetry.isEnabled = true
-                    btnCancel.isEnabled = true
                 }
             }
             if (proceedToNext) startRecordingSentence()
