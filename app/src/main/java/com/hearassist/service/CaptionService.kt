@@ -183,8 +183,8 @@ class CaptionService : Service() {
     /** 尝试开启系统级硬件 AGC（设备不支持则静默忽略） */
     private fun enableHardwareAgc(rec: AudioRecord) {
         try {
-            if (AutomaticGainControl.isAvailable(rec.audioSessionId)) {
-                AutomaticGainControl.create(rec.audioSessionId, true)
+            if (AutomaticGainControl.isAvailable()) {
+                AutomaticGainControl.create(rec.audioSessionId).setEnabled(true)
             }
         } catch (_: Exception) {
         }
