@@ -31,6 +31,8 @@ class VadProcessor(assets: AssetManager) : AutoCloseable {
         ),
     )
 
+    val windowSize = WINDOW_SIZE
+
     fun accept(samples: FloatArray) = vad.acceptWaveform(samples)
     fun isSpeechDetected(): Boolean = vad.isSpeechDetected()
     fun hasSegments(): Boolean = !vad.empty()
