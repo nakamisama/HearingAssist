@@ -30,6 +30,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -112,6 +113,8 @@ class VoiceprintActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        // 先通知 IO 录音循环停止，再取消协程/释放模型，避免循环继续调用已释放的模型
+        recording = false
         scope.cancel()
         try { vp?.close() } catch (_: Exception) {}
         try { pendingClose?.close() } catch (_: Exception) {}
@@ -376,7 +379,8 @@ class VoiceprintActivity : AppCompatActivity() {
             val deadline = System.currentTimeMillis() + 20_000
             var lastSegmentTime = 0L
             while (System.currentTimeMillis() < deadline) {
-                if (!recording) break  // 用户取消/退出 → 立即停止录音
+                // 用户取消/退出 或 协程已取消（Activity 销毁）→ 立即停止录音
+                if (!recording || !isActive) break
                 val n = rec.read(shorts, 0, shorts.size)
                 if (n <= 0) continue
                 for (i in 0 until n) floats[i] = shorts[i] / 32768f
