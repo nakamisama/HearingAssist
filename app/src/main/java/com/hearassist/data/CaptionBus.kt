@@ -17,8 +17,11 @@ object CaptionBus {
     private val _status = MutableStateFlow(EngineStatus.IDLE)
     val status: StateFlow<EngineStatus> = _status
 
-    private val _subtitles = MutableStateFlow(listOf<String>())
-    val subtitles: StateFlow<List<String>> = _subtitles
+    /** 一条字幕：说话人（可空）、说话人颜色（0=默认）、文本 */
+    data class SubtitleLine(val speaker: String?, val color: Int, val text: String)
+
+    private val _subtitles = MutableStateFlow(listOf<SubtitleLine>())
+    val subtitles: StateFlow<List<SubtitleLine>> = _subtitles
 
     /** 最近检测到的环境音事件（如“门铃”），null 表示无 */
     private val _envEvent = MutableStateFlow<String?>(null)
@@ -38,10 +41,10 @@ object CaptionBus {
     fun setStatus(v: EngineStatus) { _status.value = v }
     fun setEnvEnabled(v: Boolean) { _envEnabled.value = v }
 
-    fun addSubtitle(text: String) {
+    fun addSubtitle(text: String, speaker: String? = null, color: Int = 0) {
         if (text.isBlank()) return
         val list = _subtitles.value.toMutableList()
-        list.add(text)
+        list.add(SubtitleLine(speaker, color, text))
         if (list.size > MAX_LINES) list.removeAt(0)
         _subtitles.value = list
     }

@@ -23,9 +23,11 @@ import com.hearassist.R
 import com.hearassist.audio.EnvSoundProcessor
 import com.hearassist.audio.SttProcessor
 import com.hearassist.audio.VadProcessor
+import com.hearassist.audio.VoiceprintProcessor
 import com.hearassist.data.CaptionBus
 import com.hearassist.data.EngineStatus
 import com.hearassist.data.Settings
+import com.hearassist.data.VoiceprintStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -48,7 +50,9 @@ class CaptionService : Service() {
     private var vad: VadProcessor? = null
     private var stt: SttProcessor? = null
     private var env: EnvSoundProcessor? = null
+    private var voiceprint: VoiceprintProcessor? = null
     private val sttMutex = Mutex()
+    private val voiceprintMutex = Mutex()
 
     // 环境音环形缓冲（最近 2 秒音频）
     private val envBuffer = FloatArray(ENV_BUFFER_SIZE)
@@ -81,7 +85,8 @@ class CaptionService : Service() {
         try { vad?.close() } catch (_: Exception) {}
         try { stt?.close() } catch (_: Exception) {}
         try { env?.close() } catch (_: Exception) {}
-        vad = null; stt = null; env = null
+        try { voiceprint?.close() } catch (_: Exception) {}
+        vad = null; stt = null; env = null; voiceprint = null
         super.onDestroy()
     }
 
@@ -93,6 +98,11 @@ class CaptionService : Service() {
             stt = SttProcessor(assets, Settings.getLangMode(this@CaptionService))
             // 环境音模型仅在开关开启时加载，节省 ~30MB 内存与启动时间
             if (CaptionBus.envEnabled.value) env = EnvSoundProcessor(assets)
+            // 声纹模型仅在开关开启且已录入声纹时加载
+            val vpEntries = VoiceprintStore.load(this@CaptionService)
+            if (Settings.isVoiceprintEnabled(this@CaptionService) && vpEntries.isNotEmpty()) {
+                voiceprint = VoiceprintProcessor(assets, vpEntries)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "模型初始化失败", e)
             stopSelf()
@@ -139,10 +149,10 @@ class CaptionService : Service() {
                 // 1) VAD 调度：有人说话 → 切段；否则 → 环境音缓冲
                 v.accept(chunk)
 
-                // 2) VAD 切出的完整语音段，交给 Whisper（异步，不阻塞录音）
+                // 2) VAD 切出的完整语音段，交给识别引擎（异步，不阻塞录音）
                 while (v.hasSegments()) {
                     val seg = v.nextSegment()
-                    launchStt(seg.samples)
+                    launchStt(seg.samples, seg.samples.size)
                 }
 
                 // 3) 环境音识别（开关开启时）
@@ -165,12 +175,25 @@ class CaptionService : Service() {
         }
     }
 
-    private fun launchStt(samples: FloatArray) {
+    private fun launchStt(samples: FloatArray, durationSamples: Int) {
         scope.launch {
             CaptionBus.setStatus(EngineStatus.RECOGNIZING)
             try {
                 val text = sttMutex.withLock { stt?.recognize(samples) ?: "" }
-                if (text.isNotBlank()) CaptionBus.addSubtitle(text)
+                if (text.isNotBlank()) {
+                    var speaker: String? = null
+                    var color = 0
+                    val vp = voiceprint
+                    // 声纹比对：仅对足够长的语音段做（短句声纹不可靠）
+                    if (vp != null && durationSamples >= VoiceprintProcessor.MIN_SEGMENT_SAMPLES) {
+                        val emb = voiceprintMutex.withLock { vp.extract(samples) }
+                        if (emb != null) {
+                            speaker = vp.search(emb)
+                            if (speaker != null) color = vp.colorOf(speaker)
+                        }
+                    }
+                    CaptionBus.addSubtitle(text, speaker, color)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "识别失败", e)
             } finally {

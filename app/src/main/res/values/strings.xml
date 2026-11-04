@@ -22,4 +22,24 @@
     <string name="grant">去授权</string>
     <string name="initial_hint">对方说的话会实时显示在这里</string>
     <string name="env_detecting">正在监听环境音…</string>
+
+    <!-- 声纹 -->
+    <string name="vp_toggle_label">声纹识别（字幕标注说话人）</string>
+    <string name="vp_toggle_hint">录入家人声音后开启，字幕显示名字和颜色</string>
+    <string name="vp_manage">声纹管理</string>
+    <string name="vp_title">声纹管理</string>
+    <string name="vp_add">添加说话人</string>
+    <string name="vp_name_hint">请输入名字</string>
+    <string name="vp_empty">还没有录入声纹\n点击下方按钮添加（每位家人约需 1 分钟）</string>
+    <string name="vp_delete">删除</string>
+    <string name="vp_delete_confirm">确定删除 %1$s 的声纹吗？</string>
+    <string name="vp_enroll_title">添加说话人</string>
+    <string name="vp_color_label">选择颜色（字幕显示用）</string>
+    <string name="vp_step">第 %1$d / %2$d 句</string>
+    <string name="vp_recording_hint">请朗读这句话</string>
+    <string name="vp_recording">正在聆听…</string>
+    <string name="vp_no_speech">没有检测到语音，请点击重录</string>
+    <string name="vp_retry">重录本句</string>
+    <string name="vp_cancel">取消</string>
+    <string name="vp_enroll_success">声纹录入成功</string>
 </resources>

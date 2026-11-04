@@ -19,11 +19,11 @@ class VadProcessor(assets: AssetManager) : AutoCloseable {
                 model = "models/silero_vad.onnx",
                 // 阈值 0.35（默认 0.5）：小声说话、离麦克风稍远也能被检测到
                 threshold = 0.35f,
-                // 停顿 0.35 秒即认为一句话结束（比默认 0.25 略长，避免把停顿误切成两句）
-                minSilenceDuration = 0.35f,
+                // 停顿 0.4 秒认为一句话结束：容忍长句中的自然停顿，避免句子被切碎
+                minSilenceDuration = 0.4f,
                 minSpeechDuration = 0.2f,
-                // 单段最长 8 秒，保护 Whisper 不吃超长输入导致卡顿
-                maxSpeechDuration = 8.0f,
+                // 单段最长 15 秒：长句不再被硬切（原 8s 会把长句切成两段导致识别破碎）
+                maxSpeechDuration = 15.0f,
                 windowSize = WINDOW_SIZE,
             ),
             sampleRate = SAMPLE_RATE,

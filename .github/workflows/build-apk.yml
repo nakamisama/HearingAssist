@@ -37,7 +37,8 @@ jobs:
         run: |
           set -e
           mkdir -p app/src/main/assets/models/sensevoice \
-                   app/src/main/assets/models/audio_tagging
+                   app/src/main/assets/models/audio_tagging \
+                   app/src/main/assets/models/voiceprint
           TMP="$(mktemp -d)"
 
           # VAD 模型（0.6MB）
@@ -62,6 +63,11 @@ jobs:
             app/src/main/assets/models/audio_tagging/
           cp "$(find "$TMP/tagging" -name 'class_labels_indices.csv' | head -1)" \
             app/src/main/assets/models/audio_tagging/
+
+          # 声纹模型（3D-Speaker CAM++ 中文，28.3MB，单文件直下）
+          curl -fL --retry 3 -o "$TMP/vp.onnx" \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx
+          cp "$TMP/vp.onnx" app/src/main/assets/models/voiceprint/
 
           du -sh app/src/main/assets/models/*
 

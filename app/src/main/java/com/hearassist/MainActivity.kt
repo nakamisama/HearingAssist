@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.text.SpannableStringBuilder
+import android.text.style.ForegroundColorSpan
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
@@ -22,6 +24,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.hearassist.data.CaptionBus
 import com.hearassist.data.EngineStatus
 import com.hearassist.data.Settings
+import com.hearassist.data.VoiceprintStore
 import com.hearassist.service.CaptionService
 import com.hearassist.audio.SttProcessor
 import kotlinx.coroutines.Job
@@ -36,6 +39,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var scrollSubtitles: ScrollView
     private lateinit var swEnvSound: Switch
     private lateinit var spnLang: Spinner
+    private lateinit var swVoiceprint: Switch
+    private lateinit var btnVoiceprintManage: Button
     private lateinit var btnMain: Button
 
     private var pendingStart = false
@@ -61,6 +66,8 @@ class MainActivity : AppCompatActivity() {
         scrollSubtitles = findViewById(R.id.scrollSubtitles)
         swEnvSound = findViewById(R.id.swEnvSound)
         spnLang = findViewById(R.id.spnLang)
+        swVoiceprint = findViewById(R.id.swVoiceprint)
+        btnVoiceprintManage = findViewById(R.id.btnVoiceprintManage)
         btnMain = findViewById(R.id.btnMain)
 
         btnMain.setOnClickListener {
@@ -73,6 +80,15 @@ class MainActivity : AppCompatActivity() {
 
         swEnvSound.setOnCheckedChangeListener { _, checked ->
             CaptionBus.setEnvEnabled(checked)
+        }
+
+        swVoiceprint.setOnCheckedChangeListener { _, checked ->
+            Settings.setVoiceprintEnabled(this, checked)
+            restartServiceIfRunning()
+        }
+
+        btnVoiceprintManage.setOnClickListener {
+            startActivity(Intent(this, VoiceprintActivity::class.java))
         }
 
         // 识别语言选择：自动 / 普通话（切换后自动重启服务生效）
@@ -102,6 +118,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         observeState()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 未录入声纹时禁用声纹开关
+        swVoiceprint.isEnabled = VoiceprintStore.load(this).isNotEmpty()
     }
 
     private fun ensurePermissionThenStart() {
@@ -158,10 +180,24 @@ class MainActivity : AppCompatActivity() {
                 }
                 launch {
                     CaptionBus.subtitles.collect { lines ->
-                        tvSubtitles.text = if (lines.isEmpty()) {
-                            getString(R.string.initial_hint)
+                        if (lines.isEmpty()) {
+                            tvSubtitles.text = getString(R.string.initial_hint)
                         } else {
-                            lines.joinToString("\n")
+                            // 每条字幕用说话人颜色渲染（名字+文字整行着色）
+                            val sb = SpannableStringBuilder()
+                            lines.forEachIndexed { i, line ->
+                                if (i > 0) sb.append("\n")
+                                val start = sb.length
+                                if (line.speaker != null) sb.append("${line.speaker}：")
+                                sb.append(line.text)
+                                val color = if (line.color != 0) line.color else getColor(R.color.text_primary)
+                                sb.setSpan(
+                                    ForegroundColorSpan(color),
+                                    start, sb.length,
+                                    android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                                )
+                            }
+                            tvSubtitles.text = sb
                         }
                         scrollSubtitles.post { scrollSubtitles.fullScroll(ScrollView.FOCUS_DOWN) }
                     }

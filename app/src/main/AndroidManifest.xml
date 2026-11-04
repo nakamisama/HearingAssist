@@ -25,6 +25,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".VoiceprintActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
         <service
             android:name=".service.CaptionService"
             android:exported="false"

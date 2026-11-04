@@ -9,6 +9,7 @@
 | 功能 | 说明 |
 |------|------|
 | 实时字幕 | 软/硬件 AGC 增益 → Silero VAD 切分语音 → SenseVoice-small(int8) 离线识别 → OpenCC 转简体 → 大字号屏幕显示 |
+| 声纹识别 | 字幕标注说话人（名字+自定义颜色），CAM++ 模型（28MB），支持录入 4 人左右 |
 | 方言支持 | 普通话 / 自动识别双模式；川渝话（西南官话）与普通话接近，可识别大部分内容 |
 | 环境音识别 | 可开关（默认关闭）。检测门铃/警报/婴儿哭声等约 60 类声音，振动 + 高亮提示 |
 | 隐私 | 所有推理在手机本地完成，无任何网络请求 |
@@ -38,12 +39,15 @@ AudioRecord(16kHz/mono, AGC) → VAD(Silero, 0.6MB)
 
 ```
 app/src/main/java/com/hearassist/
-├── MainActivity.kt              # 界面：字幕屏 + 环境音开关
+├── MainActivity.kt              # 界面：字幕屏 + 环境音开关 + 声纹开关
+├── VoiceprintActivity.kt        # 声纹管理：录入（指定句子朗读）/删除
 ├── data/CaptionBus.kt           # 服务↔界面共享状态
+├── data/Settings.kt             # 偏好存储（识别语言、声纹开关）
+├── data/VoiceprintStore.kt      # 声纹库 JSON 持久化
 ├── audio/VadProcessor.kt        # Silero VAD 封装
 ├── audio/SttProcessor.kt        # SenseVoice 离线识别封装（普通话/自动模式）
+├── audio/VoiceprintProcessor.kt # CAM++ 声纹提取与比对封装
 ├── audio/EnvSoundProcessor.kt   # 环境音分类 + 中文标签映射
-├── data/Settings.kt             # 偏好存储（识别语言）
 └── service/CaptionService.kt    # 前台服务（音频循环总调度）
 ```
 
