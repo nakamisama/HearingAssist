@@ -19,12 +19,13 @@ class VadProcessor(assets: AssetManager) : AutoCloseable {
                 model = "models/silero_vad.onnx",
                 // 阈值 0.35（默认 0.5）：小声说话、离麦克风稍远也能被检测到
                 threshold = 0.35f,
-                // 停顿 0.4 秒认为一句话结束：容忍长句中的自然停顿，避免句子被切碎
-                minSilenceDuration = 0.4f,
+                // 停顿 0.3 秒即切段，加快出字
+                minSilenceDuration = 0.3f,
                 minSpeechDuration = 0.2f,
-                // 单段最长 8 秒：平衡识别完整度与字幕响应速度。
-                // 连续说话无停顿时最多等 8 秒出字幕（15s 会导致字幕延迟过久）
-                maxSpeechDuration = 8.0f,
+                // 单段最长 2.5 秒：保证"边听边出字、最多 4 秒"。
+                // 任何语音最多攒 2.5s 就送识别(约1s)，总延迟≈3.5s≤4s。
+                // 代价：长句被切成 2.5s 小段连续显示（速度优先于句子完整性）
+                maxSpeechDuration = 2.5f,
                 windowSize = WINDOW_SIZE,
             ),
             sampleRate = SAMPLE_RATE,
