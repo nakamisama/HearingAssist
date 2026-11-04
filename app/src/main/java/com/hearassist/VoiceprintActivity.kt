@@ -173,6 +173,7 @@ class VoiceprintActivity : AppCompatActivity() {
                                     .filterNot { it.name == entry.name }
                             )
                             refreshList()
+                            restartCaptionServiceIfRunning()
                         }
                         .setNegativeButton("取消", null)
                         .show()
@@ -269,6 +270,21 @@ class VoiceprintActivity : AppCompatActivity() {
                 ContextCompat.startForegroundService(this, Intent(this, CaptionService::class.java))
             } catch (_: Exception) {}
         }
+    }
+
+    /** 删除声纹后重启运行中的字幕服务，使其重新加载声纹库（否则已删除的人仍会被识别）。
+     *  用主线程 Handler 而非 activity 协程，避免删除后立即退出页面导致重启被取消、服务卡在关闭态。 */
+    private fun restartCaptionServiceIfRunning() {
+        if (!CaptionBus.running.value) return
+        stopService(Intent(this, CaptionService::class.java))
+        val appCtx = applicationContext
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (!CaptionBus.running.value) {
+                try {
+                    ContextCompat.startForegroundService(appCtx, Intent(appCtx, CaptionService::class.java))
+                } catch (_: Exception) {}
+            }
+        }, 800)
     }
 
     private fun buildColorChips() {
