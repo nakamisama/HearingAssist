@@ -52,6 +52,11 @@ class StreamingProcessor(assets: AssetManager) : AutoCloseable {
         return if (raw.isEmpty()) "" else ZhConverterUtil.toSimple(raw)
     }
 
+    /** VAD 切段时重置流式状态，使逐字预览与 VAD 分段对齐，避免定稿后旧句预览重显。 */
+    fun reset() {
+        recognizer.reset(stream)
+    }
+
     override fun close() {
         stream.release()
         recognizer.release()
