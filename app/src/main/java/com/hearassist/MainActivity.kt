@@ -87,40 +87,74 @@ class MainActivity : AppCompatActivity() {
         checkForUpdate()
     }
 
-    /** 打开 App 时检测 GitHub 最新版本，若有新版弹窗提示更新（离线时静默跳过）。 */
-    private fun checkForUpdate() {
+    /** 打开 App 时检测最新版本，若有新版弹窗提示更新（离线时静默跳过）。
+     *  主源 raw.githubusercontent.com 的 version.json（国内更可达），备用 api.github.com。 */
+    private fun checkForUpdate(manual: Boolean = false) {
         lifecycleScope.launch {
-            val tag = withContext(Dispatchers.IO) {
-                try {
-                    val conn = URL("https://api.github.com/repos/nakamisama/HearingAssist/releases/latest")
-                        .openConnection() as HttpURLConnection
-                    conn.connectTimeout = 5000
-                    conn.readTimeout = 5000
-                    conn.setRequestProperty("User-Agent", "HearingAssist")
-                    if (conn.responseCode == 200) {
-                        JSONObject(conn.inputStream.bufferedReader().readText()).optString("tag_name", "")
-                    } else ""
-                } catch (e: Exception) {
-                    ""
-                }
+            val latest = withContext(Dispatchers.IO) { fetchLatestVersion() }
+            if (isFinishing) return@launch
+            if (latest == null) {
+                if (manual) Toast.makeText(this@MainActivity, R.string.update_check_fail, Toast.LENGTH_LONG).show()
+                return@launch
             }
-            val latest = tag.removePrefix("build-").toIntOrNull() ?: return@launch
-            if (latest > BuildConfig.VERSION_CODE && !isFinishing) {
+            if (latest > BuildConfig.VERSION_CODE) {
                 AlertDialog.Builder(this@MainActivity)
                     .setTitle(R.string.update_title)
                     .setMessage(getString(R.string.update_message, latest))
-                    .setPositiveButton(R.string.update_now) { _, _ ->
-                        try {
-                            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(
-                                "https://github.com/nakamisama/HearingAssist/releases/download/build-$latest/app-release.apk")))
-                        } catch (_: Exception) {
-                            Toast.makeText(this@MainActivity, R.string.update_fail, Toast.LENGTH_LONG).show()
-                        }
-                    }
+                    .setPositiveButton(R.string.update_now) { _, _ -> confirmDownload(latest) }
                     .setNegativeButton(R.string.update_later, null)
                     .show()
+            } else if (manual) {
+                Toast.makeText(this@MainActivity, R.string.update_latest, Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    /** 二次确认后才跳转下载，避免误触直接打开浏览器。 */
+    private fun confirmDownload(latest: Int) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.update_confirm_title)
+            .setMessage(getString(R.string.update_confirm_message, latest))
+            .setPositiveButton(R.string.update_confirm_yes) { _, _ ->
+                try {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(
+                        "https://github.com/nakamisama/HearingAssist/releases/download/build-$latest/app-release.apk")))
+                } catch (_: Exception) {
+                    Toast.makeText(this, R.string.update_fail, Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNegativeButton(R.string.update_later, null)
+            .show()
+    }
+
+    /** 依次尝试 raw version.json 与 GitHub API，返回最新版本号；都失败返回 null。 */
+    private fun fetchLatestVersion(): Int? {
+        // 主源：raw 上的 version.json（CI 每次构建更新，国内通常可达）
+        try {
+            val conn = URL("https://raw.githubusercontent.com/nakamisama/HearingAssist/main/version.json")
+                .openConnection() as HttpURLConnection
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            if (conn.responseCode == 200) {
+                val v = JSONObject(conn.inputStream.bufferedReader().readText()).optInt("version", 0)
+                if (v > 0) return v
+            }
+        } catch (_: Exception) {
+        }
+        // 备用源：GitHub releases API
+        try {
+            val conn = URL("https://api.github.com/repos/nakamisama/HearingAssist/releases/latest")
+                .openConnection() as HttpURLConnection
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            conn.setRequestProperty("User-Agent", "HearingAssist")
+            if (conn.responseCode == 200) {
+                return JSONObject(conn.inputStream.bufferedReader().readText())
+                    .optString("tag_name", "").removePrefix("build-").toIntOrNull()
+            }
+        } catch (_: Exception) {
+        }
+        return null
     }
 
     // ---------- 设置面板（底部弹出） ----------
@@ -137,6 +171,7 @@ class MainActivity : AppCompatActivity() {
         val spnEngine = view.findViewById<Spinner>(R.id.spnEngine)
         val swPreview = view.findViewById<Switch>(R.id.swPreview)
         val spnInterval = view.findViewById<Spinner>(R.id.spnInterval)
+        val btnCheckUpdate = view.findViewById<Button>(R.id.btnCheckUpdate)
 
         // 声纹：先设初始状态再挂监听，避免初始化触发回调
         swVoiceprint.isChecked = Settings.isVoiceprintEnabled(this)
@@ -219,6 +254,12 @@ class MainActivity : AppCompatActivity() {
             spnInterval.isEnabled = checked
             if (!checked) CaptionBus.setPartial("")
             renderSubtitles()
+        }
+
+        // 手动检查更新（关闭面板后检测，结果以弹窗/提示呈现）
+        btnCheckUpdate.setOnClickListener {
+            dialog.dismiss()
+            checkForUpdate(manual = true)
         }
 
         dialog.show()

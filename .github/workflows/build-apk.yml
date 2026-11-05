@@ -130,3 +130,17 @@ jobs:
             下载 app-release.apk 安装即可（无需签名验证，已用 debug 签名）。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 把最新版本号写入 main 分支 version.json，供 App 经 raw.githubusercontent.com 检测更新
+      # （raw 源在国内通常比 api.github.com 更可达，作为更新检测的主源）
+      - name: Publish version.json to main
+        if: github.event_name == 'push'
+        run: |
+          git config user.name "build-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git fetch origin main
+          git checkout -B main origin/main
+          echo "{\"version\": ${{ github.run_number }}}" > version.json
+          git add version.json
+          git commit -m "chore: bump version.json to ${{ github.run_number }} [skip ci]" || true
+          git push origin main
