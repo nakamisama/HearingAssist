@@ -10,6 +10,7 @@ local.properties
 
 # 模型与 AAR 由 CI 构建时下载，不入库
 app/libs/*.aar
+app/src/main/assets/bundled/
 app/src/main/assets/models/*.onnx
 app/src/main/assets/models/**/*.onnx
 app/src/main/assets/models/**/*.txt

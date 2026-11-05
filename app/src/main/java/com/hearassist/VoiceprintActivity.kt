@@ -33,7 +33,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
 
 /**
  * 声纹管理页：列表/删除 + 录入流程（指定句子朗读，每人约 1 分钟）。
@@ -225,9 +227,9 @@ class VoiceprintActivity : AppCompatActivity() {
         // 后台线程：先按需下载声纹/VAD模型（已缓存秒过），再加载，加载完成进入朗读
         scope.launch {
             val ready = withContext(Dispatchers.IO) {
-                ModelManager.ensureModels(this@VoiceprintActivity, listOf("voiceprint", "vad")) { _, msg ->
+                ModelManager.ensureModels(this@VoiceprintActivity, listOf("voiceprint", "vad"), { _, msg ->
                     runOnUiThread { tvStatus.text = msg }
-                }
+                }) { confirmCellularDownload() }
             }
             if (!ready) {
                 Toast.makeText(this@VoiceprintActivity, "模型下载失败，请检查网络", Toast.LENGTH_LONG).show()
@@ -437,6 +439,29 @@ class VoiceprintActivity : AppCompatActivity() {
         restoreServiceIfNeeded()
         Toast.makeText(this, R.string.vp_enroll_success, Toast.LENGTH_SHORT).show()
         finish()
+    }
+
+    /** 流量下载模型需两次确认：①提示切WiFi ②确认产生费用。 */
+    private suspend fun confirmCellularDownload(): Boolean {
+        val first = suspendCancellableCoroutine<Boolean> { cont ->
+            AlertDialog.Builder(this@VoiceprintActivity)
+                .setTitle(R.string.cellular_title)
+                .setMessage(R.string.cellular_switch_wifi)
+                .setPositiveButton(R.string.cellular_continue) { _, _ -> cont.resume(true) }
+                .setNegativeButton(R.string.common_cancel) { _, _ -> cont.resume(false) }
+                .setOnCancelListener { cont.resume(false) }
+                .show()
+        }
+        if (!first) return false
+        return suspendCancellableCoroutine<Boolean> { cont ->
+            AlertDialog.Builder(this@VoiceprintActivity)
+                .setTitle(R.string.cellular_cost_title)
+                .setMessage(R.string.cellular_cost_message)
+                .setPositiveButton(R.string.cellular_confirm_download) { _, _ -> cont.resume(true) }
+                .setNegativeButton(R.string.common_cancel) { _, _ -> cont.resume(false) }
+                .setOnCancelListener { cont.resume(false) }
+                .show()
+        }
     }
 
     private fun backToList() {

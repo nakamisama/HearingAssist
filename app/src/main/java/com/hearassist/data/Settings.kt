@@ -34,8 +34,9 @@ object Settings {
     const val ASR_ACCURATE = 0
     const val ASR_REALTIME = 1
 
+    // 默认实时(小模型,快)；精准(SenseVoice大模型)由用户自选下载
     fun getAsrMode(ctx: Context): Int =
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_ASR_MODE, ASR_ACCURATE)
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_ASR_MODE, ASR_REALTIME)
 
     fun setAsrMode(ctx: Context, mode: Int) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()

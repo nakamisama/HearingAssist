@@ -33,8 +33,16 @@ jobs:
             https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-2.0.1.aar
           ls -la app/libs/
 
-      # 模型不再打包进 APK：由 App 首次使用时按需下载并本地缓存（ModelManager，国内镜像优先）。
-      # 这样代码更新只需下载小 APK，模型不变不重下。
+      # 小模型(vad+streaming)内置进 APK，开箱即用免下载；大模型(sensevoice等)按需下载。
+      - name: Bundle small models (vad + streaming) into APK
+        run: |
+          set -e
+          mkdir -p app/src/main/assets/bundled
+          curl -fL --retry 3 -o app/src/main/assets/bundled/silero_vad.onnx \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+          curl -fL --retry 3 -o app/src/main/assets/bundled/streaming.tar.bz2 \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01.tar.bz2
+          ls -la app/src/main/assets/bundled/
 
       - name: Build APK
         run: |

@@ -1,5 +1,6 @@
 package com.hearassist.service
 
+import android.app.AlertDialog
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -36,9 +37,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
 import kotlin.math.sqrt
 
 /**
@@ -111,15 +114,23 @@ class CaptionService : Service() {
     private suspend fun runEngine() = withContext(Dispatchers.Default) {
         val ctx = this@CaptionService
         asrMode = Settings.getAsrMode(ctx)
-        // 按需下载所需模型（已缓存则秒过），国内镜像优先
-        val needed = mutableListOf("vad", "sensevoice")
-        if (asrMode == Settings.ASR_REALTIME) needed.add("streaming")
+        // 按需下载所需模型（已缓存则秒过，不重复下载），国内镜像优先。
+        // 默认实时只下小模型(streaming)；大模型 sensevoice 仅精准模式或已缓存时才用，不默认下载。
+        val needed = mutableListOf("vad")
+        if (asrMode == Settings.ASR_REALTIME) {
+            needed.add("streaming")
+            if (ModelManager.isReady(ctx, "sensevoice")) needed.add("sensevoice")
+        } else {
+            needed.add("sensevoice")
+        }
         if (CaptionBus.envEnabled.value) needed.add("audio_tagging")
         val vpEntries = VoiceprintStore.load(ctx)
         if (Settings.isVoiceprintEnabled(ctx) && vpEntries.isNotEmpty()) needed.add("voiceprint")
-        val ready = ModelManager.ensureModels(ctx, needed) { _, msg -> CaptionBus.setStartMsg(msg) }
+        val ready = ModelManager.ensureModels(ctx, needed, { _, msg -> CaptionBus.setStartMsg(msg) }) {
+            confirmCellularDownload()
+        }
         if (!ready) {
-            Log.e(TAG, "模型下载失败")
+            Log.e(TAG, "模型下载失败或用户取消")
             stopSelf()
             return@withContext
         }
@@ -127,7 +138,10 @@ class CaptionService : Service() {
             vad = VadProcessor(ctx)
             // 实时模式额外加载流式引擎做逐字预览；最终定稿两种模式都用 SenseVoice（准确+标点）
             if (asrMode == Settings.ASR_REALTIME) streaming = StreamingProcessor(ctx)
-            stt = SttProcessor(ctx, Settings.getLangMode(ctx))
+            // 大模型仅精准模式或已缓存时加载；实时未下载大模型则用流式定稿
+            if (asrMode == Settings.ASR_ACCURATE || ModelManager.isReady(ctx, "sensevoice")) {
+                stt = SttProcessor(ctx, Settings.getLangMode(ctx))
+            }
             if (CaptionBus.envEnabled.value) env = EnvSoundProcessor(ctx)
             if (Settings.isVoiceprintEnabled(ctx) && vpEntries.isNotEmpty()) {
                 voiceprint = VoiceprintProcessor(ctx, vpEntries)
@@ -140,6 +154,33 @@ class CaptionService : Service() {
         // 模型加载完成，自动开始收听
         CaptionBus.setStatus(EngineStatus.LISTENING)
         audioLoop()
+    }
+
+    /** 流量下载模型需两次确认：①提示切WiFi ②确认产生费用。WiFi 时不会走到这里。 */
+    private suspend fun confirmCellularDownload(): Boolean {
+        val first = withContext(Dispatchers.Main) {
+            suspendCancellableCoroutine<Boolean> { cont ->
+                AlertDialog.Builder(this@CaptionService)
+                    .setTitle(R.string.cellular_title)
+                    .setMessage(R.string.cellular_switch_wifi)
+                    .setPositiveButton(R.string.cellular_continue) { _, _ -> cont.resume(true) }
+                    .setNegativeButton(R.string.common_cancel) { _, _ -> cont.resume(false) }
+                    .setOnCancelListener { cont.resume(false) }
+                    .show()
+            }
+        }
+        if (!first) return false
+        return withContext(Dispatchers.Main) {
+            suspendCancellableCoroutine<Boolean> { cont ->
+                AlertDialog.Builder(this@CaptionService)
+                    .setTitle(R.string.cellular_cost_title)
+                    .setMessage(R.string.cellular_cost_message)
+                    .setPositiveButton(R.string.cellular_confirm_download) { _, _ -> cont.resume(true) }
+                    .setNegativeButton(R.string.common_cancel) { _, _ -> cont.resume(false) }
+                    .setOnCancelListener { cont.resume(false) }
+                    .show()
+            }
+        }
     }
 
     private suspend fun audioLoop() = withContext(Dispatchers.IO) {
@@ -191,12 +232,17 @@ class CaptionService : Service() {
                     launchStt(seg.samples, seg.samples.size)
                 }
 
-                // 2.5) 实时模式：流式逐字预览（边说边蹦字），定稿后由 SenseVoice 替换为准确文本
+                // 2.5) 实时模式：流式逐字预览；有大模型则定稿由 SenseVoice 替换，无大模型则流式端点直接定稿
                 if (asrMode == Settings.ASR_REALTIME) {
                     val s = streaming
                     if (s != null) {
-                        s.accept(chunk)
-                        CaptionBus.setPartial(s.partial())
+                        val fin = s.accept(chunk)
+                        if (stt == null && fin != null) {
+                            CaptionBus.addSubtitle(fin)
+                            CaptionBus.setPartial("")
+                        } else {
+                            CaptionBus.setPartial(s.partial())
+                        }
                     }
                 }
 
