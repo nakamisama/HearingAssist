@@ -42,8 +42,14 @@
     <string name="update_check_fail">检查更新失败，请检查网络后重试</string>
     <string name="update_latest">已是最新版本</string>
     <string name="update_confirm_title">确认更新</string>
-    <string name="update_confirm_message">将打开浏览器下载 build-%1$d 安装包（约288MB），下载后需手动安装。是否继续？</string>
+    <string name="update_confirm_message">将在 App 内下载 build-%1$d 安装包（约288MB，仅WiFi），下载完自动拉起安装。是否继续？</string>
     <string name="update_confirm_yes">确认下载</string>
+    <string name="update_wifi_only">更新仅在 WiFi 环境下进行，请连接 WiFi 后重试</string>
+    <string name="update_downloading">正在下载更新…</string>
+    <string name="update_download_fail">下载失败，请检查网络后重试</string>
+    <string name="update_install_perm_title">需要安装权限</string>
+    <string name="update_install_perm_message">请允许本应用"安装未知应用"，然后返回继续安装更新。</string>
+    <string name="update_install_perm_go">去授权</string>
 
     <string name="engine_label">识别引擎</string>
     <string name="engine_hint">精准=整句显示；实时=逐字预览+说完自动精准标点</string>

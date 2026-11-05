@@ -1,9 +1,15 @@
 package com.hearassist
 
 import android.Manifest
+import android.app.ProgressDialog
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
 import android.view.View
@@ -21,6 +27,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -37,6 +44,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -110,38 +119,135 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 二次确认后才跳转下载，避免误触直接打开浏览器。 */
+    /** 仅 WiFi 下允许更新；二次确认后在 App 内下载并拉起安装，不调用外部浏览器。 */
     private fun confirmDownload(latest: Int) {
+        if (!isWifi()) {
+            Toast.makeText(this, R.string.update_wifi_only, Toast.LENGTH_LONG).show()
+            return
+        }
         AlertDialog.Builder(this)
             .setTitle(R.string.update_confirm_title)
             .setMessage(getString(R.string.update_confirm_message, latest))
-            .setPositiveButton(R.string.update_confirm_yes) { _, _ ->
-                try {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(
-                        "https://github.com/nakamisama/HearingAssist/releases/download/build-$latest/app-release.apk")))
-                } catch (_: Exception) {
-                    Toast.makeText(this, R.string.update_fail, Toast.LENGTH_LONG).show()
-                }
-            }
+            .setPositiveButton(R.string.update_confirm_yes) { _, _ -> downloadAndInstall(latest) }
             .setNegativeButton(R.string.update_later, null)
             .show()
     }
 
-    /** 依次尝试 raw version.json 与 GitHub API，返回最新版本号；都失败返回 null。 */
-    private fun fetchLatestVersion(): Int? {
-        // 主源：raw 上的 version.json（CI 每次构建更新，国内通常可达）
-        try {
-            val conn = URL("https://raw.githubusercontent.com/nakamisama/HearingAssist/main/version.json")
-                .openConnection() as HttpURLConnection
-            conn.connectTimeout = 5000
-            conn.readTimeout = 5000
-            if (conn.responseCode == 200) {
-                val v = JSONObject(conn.inputStream.bufferedReader().readText()).optInt("version", 0)
-                if (v > 0) return v
-            }
-        } catch (_: Exception) {
+    private fun isWifi(): Boolean {
+        val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val net = cm.activeNetwork ?: return false
+        return cm.getNetworkCapabilities(net)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+    }
+
+    /** App 内下载 APK（国内镜像优先），带进度，完成后拉起系统安装器。 */
+    private fun downloadAndInstall(latest: Int) {
+        val progress = ProgressDialog(this).apply {
+            setTitle(R.string.update_downloading)
+            setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
+            max = 100
+            setCancelable(false)
+            show()
         }
-        // 备用源：GitHub releases API
+        lifecycleScope.launch {
+            val file = withContext(Dispatchers.IO) { downloadApk(latest) { p ->
+                runOnUiThread { progress.progress = p }
+            } }
+            progress.dismiss()
+            if (isFinishing) return@launch
+            if (file == null) {
+                Toast.makeText(this@MainActivity, R.string.update_download_fail, Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            installApk(file)
+        }
+    }
+
+    /** 依次尝试国内镜像与直连下载 APK，返回本地文件；全失败返回 null。 */
+    private fun downloadApk(latest: Int, onProgress: (Int) -> Unit): File? {
+        val gh = "https://github.com/nakamisama/HearingAssist/releases/download/build-$latest/app-release.apk"
+        val urls = listOf(
+            "https://ghproxy.net/$gh",
+            "https://gh-proxy.com/$gh",
+            gh,
+        )
+        val out = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "update-$latest.apk")
+        for (u in urls) {
+            try {
+                val conn = URL(u).openConnection() as HttpURLConnection
+                conn.connectTimeout = 10000
+                conn.readTimeout = 30000
+                conn.instanceFollowRedirects = true
+                if (conn.responseCode != 200) continue
+                val total = conn.contentLengthLong
+                conn.inputStream.use { input ->
+                    FileOutputStream(out).use { fos ->
+                        val buf = ByteArray(64 * 1024)
+                        var read = 0L
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            fos.write(buf, 0, n)
+                            read += n
+                            if (total > 0) onProgress(((read * 100) / total).toInt().coerceIn(0, 100))
+                        }
+                    }
+                }
+                if (out.length() > 1_000_000) return out  // 下载成功
+            } catch (_: Exception) {
+            }
+        }
+        return null
+    }
+
+    /** 拉起系统安装器；Android 8+ 需"安装未知应用"权限，未授权则引导开启。 */
+    private fun installApk(file: File) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.update_install_perm_title)
+                .setMessage(R.string.update_install_perm_message)
+                .setPositiveButton(R.string.update_install_perm_go) { _, _ ->
+                    try {
+                        startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:$packageName")))
+                    } catch (_: Exception) {
+                    }
+                }
+                .setNegativeButton(R.string.update_later, null)
+                .show()
+            return
+        }
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            startActivity(Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+        } catch (_: Exception) {
+            Toast.makeText(this, R.string.update_fail, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** 依次尝试国内镜像→raw→GitHub API 读取 version.json，返回最新版本号；都失败返回 null。 */
+    private fun fetchLatestVersion(): Int? {
+        val raw = "https://raw.githubusercontent.com/nakamisama/HearingAssist/main/version.json"
+        val sources = listOf(
+            "https://ghproxy.net/$raw",   // 国内镜像优先
+            "https://gh-proxy.com/$raw",
+            raw,
+        )
+        for (u in sources) {
+            try {
+                val conn = URL(u).openConnection() as HttpURLConnection
+                conn.connectTimeout = 5000
+                conn.readTimeout = 5000
+                if (conn.responseCode == 200) {
+                    val v = JSONObject(conn.inputStream.bufferedReader().readText()).optInt("version", 0)
+                    if (v > 0) return v
+                }
+            } catch (_: Exception) {
+            }
+        }
+        // 备用：GitHub releases API
         try {
             val conn = URL("https://api.github.com/repos/nakamisama/HearingAssist/releases/latest")
                 .openConnection() as HttpURLConnection
