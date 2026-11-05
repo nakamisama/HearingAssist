@@ -79,7 +79,7 @@ object ModelManager {
 
     /** 确保所需模型已下载，返回是否全部就绪。onProgress(总体百分比, 状态文本)。
      *  confirmCellular：需要走网络下载且当前是流量时，先调用它征求用户同意（返回 false 则取消）。 */
-    fun ensureModels(
+    suspend fun ensureModels(
         ctx: Context,
         ids: List<String>,
         onProgress: (Int, String) -> Unit,
