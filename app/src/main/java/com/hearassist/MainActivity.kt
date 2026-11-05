@@ -135,6 +135,8 @@ class MainActivity : AppCompatActivity() {
         val btnManage = view.findViewById<Button>(R.id.btnVoiceprintManage)
         val spnLang = view.findViewById<Spinner>(R.id.spnLang)
         val spnEngine = view.findViewById<Spinner>(R.id.spnEngine)
+        val swPreview = view.findViewById<Switch>(R.id.swPreview)
+        val spnInterval = view.findViewById<Spinner>(R.id.spnInterval)
 
         // 声纹：先设初始状态再挂监听，避免初始化触发回调
         swVoiceprint.isChecked = Settings.isVoiceprintEnabled(this)
@@ -188,6 +190,30 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+
+        // 逐字预览开关（仅实时模式生效，无需重启服务）
+        swPreview.isChecked = Settings.isPreviewEnabled(this)
+        swPreview.isEnabled = Settings.getAsrMode(this) == Settings.ASR_REALTIME
+
+        // 预览刷新间隔
+        val intervalLabels = resources.getStringArray(R.array.interval_options)
+        spnInterval.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, intervalLabels)
+        val curInterval = Settings.getPreviewInterval(this)
+        spnInterval.setSelection(Settings.PREVIEW_INTERVALS.indexOf(curInterval).coerceAtLeast(0))
+        spnInterval.isEnabled = swPreview.isChecked
+        spnInterval.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) {
+                Settings.setPreviewInterval(this@MainActivity, Settings.PREVIEW_INTERVALS[position])
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+        swPreview.setOnCheckedChangeListener { _, checked ->
+            Settings.setPreviewEnabled(this, checked)
+            spnInterval.isEnabled = checked
+            if (!checked) CaptionBus.setPartial("")
+            renderSubtitles()
         }
 
         dialog.show()
@@ -261,9 +287,12 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     var lastPartialRender = 0L
                     CaptionBus.partial.collect { p ->
+                        // 关闭逐字预览时不渲染半句
+                        if (!Settings.isPreviewEnabled(this@MainActivity)) return@collect
                         val now = System.currentTimeMillis()
-                        // 预览节流刷新(200ms)、清空时立即刷新，避免整屏高频重绘导致闪烁
-                        if (p.isEmpty() || now - lastPartialRender >= 200) {
+                        val interval = Settings.getPreviewInterval(this@MainActivity).toLong()
+                        // 按设置间隔节流刷新、清空时立即刷新，避免整屏高频重绘导致闪烁
+                        if (p.isEmpty() || now - lastPartialRender >= interval) {
                             lastPartialRender = now
                             renderSubtitles(false)
                         }
@@ -295,7 +324,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val lines = CaptionBus.subtitles.value
-        val partial = CaptionBus.partial.value
+        val partial = if (Settings.isPreviewEnabled(this)) CaptionBus.partial.value else ""
         if (lines.isEmpty() && partial.isEmpty()) {
             tvSubtitles.text = getString(R.string.initial_hint)
         } else {

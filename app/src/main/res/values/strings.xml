@@ -41,6 +41,17 @@
 
     <string name="engine_label">识别引擎</string>
     <string name="engine_hint">精准=整句显示；实时=逐字预览+说完自动精准标点</string>
+    <string name="preview_label">逐字预览</string>
+    <string name="preview_hint">实时模式下边说边逐字显示（关闭则只显示定稿）</string>
+    <string name="preview_interval_label">预览刷新间隔</string>
+
+    <string-array name="interval_options">
+        <item>100ms</item>
+        <item>200ms</item>
+        <item>300ms</item>
+        <item>500ms</item>
+        <item>1000ms</item>
+    </string-array>
 
     <string-array name="engine_options">
         <item>精准模式</item>

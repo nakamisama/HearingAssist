@@ -8,6 +8,27 @@ object Settings {
     private const val KEY_LANG_MODE = "lang_mode"
     private const val KEY_VP_ENABLED = "vp_enabled"
     private const val KEY_ASR_MODE = "asr_mode"
+    private const val KEY_PREVIEW_ENABLED = "preview_enabled"
+    private const val KEY_PREVIEW_INTERVAL = "preview_interval"
+
+    // 逐字预览刷新间隔可选值（ms），默认 200
+    val PREVIEW_INTERVALS = intArrayOf(100, 200, 300, 500, 1000)
+
+    fun isPreviewEnabled(ctx: Context): Boolean =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_PREVIEW_ENABLED, true)
+
+    fun setPreviewEnabled(ctx: Context, v: Boolean) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_PREVIEW_ENABLED, v).apply()
+    }
+
+    fun getPreviewInterval(ctx: Context): Int =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_PREVIEW_INTERVAL, 200)
+
+    fun setPreviewInterval(ctx: Context, ms: Int) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_PREVIEW_INTERVAL, ms).apply()
+    }
 
     // 识别引擎：0=精准(SenseVoice整句) 1=实时(流式逐字)
     const val ASR_ACCURATE = 0
