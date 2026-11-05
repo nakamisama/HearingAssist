@@ -83,7 +83,7 @@ object ModelManager {
         ctx: Context,
         ids: List<String>,
         onProgress: (Int, String) -> Unit,
-        confirmCellular: () -> Boolean = { true },
+        confirmCellular: suspend () -> Boolean = { true },
     ): Boolean {
         val specs = MODELS.filter { it.id in ids }
         var done = 0
