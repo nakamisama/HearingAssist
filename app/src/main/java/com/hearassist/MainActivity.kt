@@ -9,7 +9,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
-import android.provider.Settings
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
 import android.view.View
@@ -207,7 +206,7 @@ class MainActivity : AppCompatActivity() {
                 .setMessage(R.string.update_install_perm_message)
                 .setPositiveButton(R.string.update_install_perm_go) { _, _ ->
                     try {
-                        startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                             Uri.parse("package:$packageName")))
                     } catch (_: Exception) {
                     }
