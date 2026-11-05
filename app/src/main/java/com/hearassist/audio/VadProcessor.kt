@@ -1,6 +1,7 @@
 package com.hearassist.audio
 
-import android.content.res.AssetManager
+import android.content.Context
+import com.hearassist.data.ModelManager
 import com.k2fsa.sherpa.onnx.SileroVadModelConfig
 import com.k2fsa.sherpa.onnx.SpeechSegment
 import com.k2fsa.sherpa.onnx.Vad
@@ -10,13 +11,12 @@ import com.k2fsa.sherpa.onnx.VadModelConfig
  * Silero VAD 封装：判断当前音频里是否有人说话，并把连续语音切分成段。
  * 模型仅 0.6MB，CPU 开销极小，是整个管线的“调度器”。
  */
-class VadProcessor(assets: AssetManager) : AutoCloseable {
+class VadProcessor(ctx: Context) : AutoCloseable {
 
     private val vad: Vad = Vad(
-        assets,
-        VadModelConfig(
+        config = VadModelConfig(
             sileroVadModelConfig = SileroVadModelConfig(
-                model = "models/silero_vad.onnx",
+                model = ModelManager.modelFile(ctx, "vad", "silero_vad.onnx"),
                 // 阈值 0.35（默认 0.5）：小声说话、离麦克风稍远也能被检测到
                 threshold = 0.35f,
                 // 停顿 0.3 秒即切段，加快出字

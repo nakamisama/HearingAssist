@@ -1,7 +1,8 @@
 package com.hearassist.audio
 
-import android.content.res.AssetManager
+import android.content.Context
 import com.github.houbb.opencc4j.util.ZhConverterUtil
+import com.hearassist.data.ModelManager
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineRecognizer
 import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
@@ -12,16 +13,15 @@ import com.k2fsa.sherpa.onnx.OnlineZipformer2CtcModelConfig
  * 边喂音频边解码，逐字出字；检测到端点（一句话结束）时返回整句 finalized 文本。
  * 与声纹无关——声纹由 VAD 段独立提取，两种引擎模式都可用。
  */
-class StreamingProcessor(assets: AssetManager) : AutoCloseable {
+class StreamingProcessor(ctx: Context) : AutoCloseable {
 
     private val recognizer = OnlineRecognizer(
-        assets,
-        OnlineRecognizerConfig(
+        config = OnlineRecognizerConfig(
             modelConfig = OnlineModelConfig(
                 zipformer2Ctc = OnlineZipformer2CtcModelConfig(
-                    model = "models/streaming/model.int8.onnx",
+                    model = ModelManager.modelFile(ctx, "streaming", "model.int8.onnx"),
                 ),
-                tokens = "models/streaming/tokens.txt",
+                tokens = ModelManager.modelFile(ctx, "streaming", "tokens.txt"),
                 numThreads = 2,
                 provider = "cpu",
             ),

@@ -1,6 +1,7 @@
 package com.hearassist.audio
 
-import android.content.res.AssetManager
+import android.content.Context
+import com.hearassist.data.ModelManager
 import com.k2fsa.sherpa.onnx.AudioTagging
 import com.k2fsa.sherpa.onnx.AudioTaggingConfig
 import com.k2fsa.sherpa.onnx.AudioTaggingModelConfig
@@ -11,21 +12,20 @@ import com.k2fsa.sherpa.onnx.OfflineZipformerAudioTaggingModelConfig
  * 输入一小段非语音音频，输出 Top-K 声音类别及概率（AudioSet 527 类）。
  * 仅在用户开启“环境音识别”开关时加载。
  */
-class EnvSoundProcessor(assets: AssetManager) : AutoCloseable {
+class EnvSoundProcessor(ctx: Context) : AutoCloseable {
 
     data class EnvEvent(val name: String, val prob: Float)
 
     private val tagger = AudioTagging(
-        assets,
-        AudioTaggingConfig(
+        config = AudioTaggingConfig(
             model = AudioTaggingModelConfig(
                 zipformer = OfflineZipformerAudioTaggingModelConfig(
-                    model = "models/audio_tagging/model.int8.onnx",
+                    model = ModelManager.modelFile(ctx, "audio_tagging", "model.int8.onnx"),
                 ),
                 numThreads = 1,
                 provider = "cpu",
             ),
-            labels = "models/audio_tagging/class_labels_indices.csv",
+            labels = ModelManager.modelFile(ctx, "audio_tagging", "class_labels_indices.csv"),
             topK = 3,
         ),
     )

@@ -27,6 +27,7 @@ import com.hearassist.audio.VadProcessor
 import com.hearassist.audio.VoiceprintProcessor
 import com.hearassist.data.CaptionBus
 import com.hearassist.data.EngineStatus
+import com.hearassist.data.ModelManager
 import com.hearassist.data.Settings
 import com.hearassist.data.VoiceprintStore
 import kotlinx.coroutines.CoroutineScope
@@ -108,20 +109,28 @@ class CaptionService : Service() {
     // ---------- 引擎 ----------
 
     private suspend fun runEngine() = withContext(Dispatchers.Default) {
+        val ctx = this@CaptionService
+        asrMode = Settings.getAsrMode(ctx)
+        // 按需下载所需模型（已缓存则秒过），国内镜像优先
+        val needed = mutableListOf("vad", "sensevoice")
+        if (asrMode == Settings.ASR_REALTIME) needed.add("streaming")
+        if (CaptionBus.envEnabled.value) needed.add("audio_tagging")
+        val vpEntries = VoiceprintStore.load(ctx)
+        if (Settings.isVoiceprintEnabled(ctx) && vpEntries.isNotEmpty()) needed.add("voiceprint")
+        val ready = ModelManager.ensureModels(ctx, needed) { _, msg -> CaptionBus.setStartMsg(msg) }
+        if (!ready) {
+            Log.e(TAG, "模型下载失败")
+            stopSelf()
+            return@withContext
+        }
         try {
-            asrMode = Settings.getAsrMode(this@CaptionService)
-            vad = VadProcessor(assets)
+            vad = VadProcessor(ctx)
             // 实时模式额外加载流式引擎做逐字预览；最终定稿两种模式都用 SenseVoice（准确+标点）
-            if (asrMode == Settings.ASR_REALTIME) {
-                streaming = StreamingProcessor(assets)
-            }
-            stt = SttProcessor(assets, Settings.getLangMode(this@CaptionService))
-            // 环境音模型仅在开关开启时加载，节省 ~30MB 内存与启动时间
-            if (CaptionBus.envEnabled.value) env = EnvSoundProcessor(assets)
-            // 声纹模型仅在开关开启且已录入声纹时加载
-            val vpEntries = VoiceprintStore.load(this@CaptionService)
-            if (Settings.isVoiceprintEnabled(this@CaptionService) && vpEntries.isNotEmpty()) {
-                voiceprint = VoiceprintProcessor(assets, vpEntries)
+            if (asrMode == Settings.ASR_REALTIME) streaming = StreamingProcessor(ctx)
+            stt = SttProcessor(ctx, Settings.getLangMode(ctx))
+            if (CaptionBus.envEnabled.value) env = EnvSoundProcessor(ctx)
+            if (Settings.isVoiceprintEnabled(ctx) && vpEntries.isNotEmpty()) {
+                voiceprint = VoiceprintProcessor(ctx, vpEntries)
             }
         } catch (e: Exception) {
             Log.e(TAG, "模型初始化失败", e)

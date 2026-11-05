@@ -435,6 +435,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 launch { CaptionBus.subtitles.collect { renderSubtitles(true) } }
+                launch { CaptionBus.startMsg.collect { renderSubtitles() } }
                 launch {
                     var lastPartialRender = 0L
                     CaptionBus.partial.collect { p ->
@@ -469,9 +470,10 @@ class MainActivity : AppCompatActivity() {
 
     /** 渲染已确认字幕（按说话人着色）+ 实时半句（高亮色）。scrollToBottom 仅在新增定稿行时为 true，预览刷新不滚动防闪。 */
     private fun renderSubtitles(scrollToBottom: Boolean = false) {
-        // 启动中：显示加载提示，模型就绪后自动切换为正常字幕
+        // 启动中：显示模型下载/加载进度，模型就绪后自动切换为正常字幕
         if (CaptionBus.status.value == EngineStatus.STARTING) {
-            tvSubtitles.text = getString(R.string.starting_hint)
+            val msg = CaptionBus.startMsg.value
+            tvSubtitles.text = if (msg.isEmpty()) getString(R.string.starting_hint) else msg
             return
         }
         val lines = CaptionBus.subtitles.value

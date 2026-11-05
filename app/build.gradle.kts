@@ -75,4 +75,7 @@ dependencies {
 
     // 繁体 → 简体中文转换（纯 Java 实现，无额外体积负担）
     implementation("com.github.houbb:opencc4j:1.8.0")
+
+    // 解压模型 tar.bz2 包（模型按需下载，不打包进 APK）
+    implementation("org.apache.commons:commons-compress:1.26.1")
 }

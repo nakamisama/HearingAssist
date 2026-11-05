@@ -1,7 +1,8 @@
 package com.hearassist.audio
 
-import android.content.res.AssetManager
+import android.content.Context
 import android.graphics.Color
+import com.hearassist.data.ModelManager
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractor
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingManager
@@ -17,7 +18,7 @@ import com.k2fsa.sherpa.onnx.SpeakerEmbeddingManager
  *     持久化由 VoiceprintStore 负责（本类只持有运行时内存副本）
  */
 class VoiceprintProcessor(
-    assets: AssetManager,
+    ctx: Context,
     preloaded: List<SpeakerEntry> = emptyList(),
 ) : AutoCloseable {
 
@@ -28,9 +29,8 @@ class VoiceprintProcessor(
     )
 
     private val extractor = SpeakerEmbeddingExtractor(
-        assets,
-        SpeakerEmbeddingExtractorConfig(
-            model = MODEL_PATH,
+        config = SpeakerEmbeddingExtractorConfig(
+            model = ModelManager.modelFile(ctx, "voiceprint", "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx"),
             numThreads = 1,
             provider = "cpu",
         ),
@@ -88,9 +88,6 @@ class VoiceprintProcessor(
     }
 
     companion object {
-        // 声纹模型在 assets 中的路径（CI 必须以此文件名保存，否则加载崩溃）
-        const val MODEL_PATH = "models/voiceprint/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx"
-
         // 余弦相似度阈值：CAM++ 同人样本相似度通常 >0.6，异人 <0.4
         // 0.5 为官方示例值，实测后可调
         const val THRESHOLD = 0.5f

@@ -23,6 +23,7 @@ import androidx.core.content.ContextCompat
 import com.hearassist.audio.VadProcessor
 import com.hearassist.audio.VoiceprintProcessor
 import com.hearassist.data.CaptionBus
+import com.hearassist.data.ModelManager
 import com.hearassist.data.VoiceprintStore
 import com.hearassist.service.CaptionService
 import kotlinx.coroutines.CoroutineScope
@@ -202,18 +203,6 @@ class VoiceprintActivity : AppCompatActivity() {
     // ---------- 录入流程（指定句子朗读） ----------
 
     private fun startEnroll(name: String) {
-        // 先确认模型文件存在，避免原生层加载缺失模型时崩溃
-        val modelPresent = try {
-            assets.open(VoiceprintProcessor.MODEL_PATH).close()
-            true
-        } catch (e: Exception) {
-            false
-        }
-        if (!modelPresent) {
-            Toast.makeText(this, "声纹模型缺失，请更新到最新版 App", Toast.LENGTH_LONG).show()
-            return
-        }
-
         enrollName = name
         enrollColor = presetColors[VoiceprintStore.load(this).size % presetColors.size]
         selectedChip = presetColors.indexOf(enrollColor).let { if (it < 0) 0 else it }
@@ -233,10 +222,20 @@ class VoiceprintActivity : AppCompatActivity() {
         // 暂停字幕服务，把麦克风让给录入
         pauseServiceForEnrollment()
 
-        // 后台线程加载声纹模型，加载完成再进入朗读
+        // 后台线程：先按需下载声纹/VAD模型（已缓存秒过），再加载，加载完成进入朗读
         scope.launch {
+            val ready = withContext(Dispatchers.IO) {
+                ModelManager.ensureModels(this@VoiceprintActivity, listOf("voiceprint", "vad")) { _, msg ->
+                    runOnUiThread { tvStatus.text = msg }
+                }
+            }
+            if (!ready) {
+                Toast.makeText(this@VoiceprintActivity, "模型下载失败，请检查网络", Toast.LENGTH_LONG).show()
+                backToList()
+                return@launch
+            }
             val processor = withContext(Dispatchers.IO) {
-                try { VoiceprintProcessor(assets) } catch (e: Exception) { null }
+                try { VoiceprintProcessor(this@VoiceprintActivity) } catch (e: Exception) { null }
             }
             // 加载期间若用户已退出/重新发起录入（代数变化或不在录入界面），关闭模型并放弃
             if (gen != enrollGeneration || viewEnroll.visibility != View.VISIBLE) {
@@ -375,7 +374,7 @@ class VoiceprintActivity : AppCompatActivity() {
     /** 录制一句指定的话：VAD 切段 → 提取声纹；读完（1.2s 无新语音）即进入下一句 */
     private suspend fun recordSentence(): List<FloatArray> = withContext(Dispatchers.IO) {
         val extractor = vp ?: return@withContext emptyList()
-        val vad = VadProcessor(assets)
+        val vad = VadProcessor(this@VoiceprintActivity)
         val minBuf = AudioRecord.getMinBufferSize(
             VadProcessor.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
         )

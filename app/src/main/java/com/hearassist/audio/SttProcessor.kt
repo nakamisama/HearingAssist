@@ -1,7 +1,8 @@
 package com.hearassist.audio
 
-import android.content.res.AssetManager
+import android.content.Context
 import com.github.houbb.opencc4j.util.ZhConverterUtil
+import com.hearassist.data.ModelManager
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
@@ -13,18 +14,17 @@ import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
  * 对西南官话（川渝话）等接近普通话的方言有一定识别能力。
  * 输出再经 OpenCC 统一为简体中文。完全在手机本地推理，不联网。
  */
-class SttProcessor(assets: AssetManager, langMode: Int = LANG_AUTO) : AutoCloseable {
+class SttProcessor(ctx: Context, langMode: Int = LANG_AUTO) : AutoCloseable {
 
     private val recognizer = OfflineRecognizer(
-        assets,
-        OfflineRecognizerConfig(
+        config = OfflineRecognizerConfig(
             modelConfig = OfflineModelConfig(
                 senseVoice = OfflineSenseVoiceModelConfig(
-                    model = "models/sensevoice/model.int8.onnx",
+                    model = ModelManager.modelFile(ctx, "sensevoice", "model.int8.onnx"),
                     language = languageCode(langMode),
                     useInverseTextNormalization = true,
                 ),
-                tokens = "models/sensevoice/tokens.txt",
+                tokens = ModelManager.modelFile(ctx, "sensevoice", "tokens.txt"),
                 numThreads = 2,  // 荣耀 X50 八核，用 2 线程平衡速度与发热
                 provider = "cpu",
             ),

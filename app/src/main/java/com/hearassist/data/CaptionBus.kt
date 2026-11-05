@@ -29,6 +29,11 @@ object CaptionBus {
     val partial: StateFlow<String> = _partial
     fun setPartial(t: String) { _partial.value = t }
 
+    /** 启动/模型下载进度文本（STARTING 状态时显示） */
+    private val _startMsg = MutableStateFlow("")
+    val startMsg: StateFlow<String> = _startMsg
+    fun setStartMsg(t: String) { _startMsg.value = t }
+
     /** 最近检测到的环境音事件（如“门铃”），null 表示无 */
     private val _envEvent = MutableStateFlow<String?>(null)
     val envEvent: StateFlow<String?> = _envEvent

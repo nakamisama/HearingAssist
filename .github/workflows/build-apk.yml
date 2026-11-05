@@ -33,55 +33,8 @@ jobs:
             https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-2.0.1.aar
           ls -la app/libs/
 
-      - name: Download models (VAD / Whisper tiny / 音频打标)
-        run: |
-          set -e
-          mkdir -p app/src/main/assets/models/sensevoice \
-                   app/src/main/assets/models/audio_tagging \
-                   app/src/main/assets/models/voiceprint \
-                   app/src/main/assets/models/streaming
-          TMP="$(mktemp -d)"
-
-          # VAD 模型（0.6MB）
-          curl -fL --retry 3 -o "$TMP/silero_vad.onnx" \
-            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
-          cp "$TMP/silero_vad.onnx" app/src/main/assets/models/
-
-          # SenseVoice 中文识别模型（int8 量化，自带标点与数字归一化）
-          curl -fL --retry 3 -o "$TMP/sv.tar.bz2" \
-            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2
-          mkdir "$TMP/sv" && tar -xjf "$TMP/sv.tar.bz2" -C "$TMP/sv"
-          cp "$(find "$TMP/sv" -name 'model.int8.onnx' | head -1)" \
-            app/src/main/assets/models/sensevoice/
-          cp "$(find "$TMP/sv" -name 'tokens.txt' | head -1)" \
-            app/src/main/assets/models/sensevoice/
-
-          # 流式实时识别模型（streaming-zipformer-small-ctc-zh int8, 约21MB，逐字出字）
-          curl -fL --retry 3 -o "$TMP/st.tar.bz2" \
-            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01.tar.bz2
-          mkdir "$TMP/st" && tar -xjf "$TMP/st.tar.bz2" -C "$TMP/st"
-          cp "$(find "$TMP/st" -name 'model.int8.onnx' | head -1)" \
-            app/src/main/assets/models/streaming/
-          cp "$(find "$TMP/st" -name 'tokens.txt' | head -1)" \
-            app/src/main/assets/models/streaming/
-
-          # 环境音分类模型（zipformer small, int8）
-          curl -fL --retry 3 -o "$TMP/tagging.tar.bz2" \
-            https://github.com/k2-fsa/sherpa-onnx/releases/download/audio-tagging-models/sherpa-onnx-zipformer-small-audio-tagging-2024-04-15.tar.bz2
-          mkdir "$TMP/tagging" && tar -xjf "$TMP/tagging.tar.bz2" -C "$TMP/tagging"
-          cp "$(find "$TMP/tagging" -name 'model.int8.onnx' | head -1)" \
-            app/src/main/assets/models/audio_tagging/
-          cp "$(find "$TMP/tagging" -name 'class_labels_indices.csv' | head -1)" \
-            app/src/main/assets/models/audio_tagging/
-
-          # 声纹模型（3D-Speaker CAM++ 中文，28.3MB，单文件直下）
-          # 注意：必须保存为代码中 VoiceprintProcessor.MODEL_PATH 指定的文件名，否则加载崩溃
-          curl -fL --retry 3 -o "$TMP/vp.onnx" \
-            https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx
-          cp "$TMP/vp.onnx" \
-            app/src/main/assets/models/voiceprint/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx
-
-          du -sh app/src/main/assets/models/*
+      # 模型不再打包进 APK：由 App 首次使用时按需下载并本地缓存（ModelManager，国内镜像优先）。
+      # 这样代码更新只需下载小 APK，模型不变不重下。
 
       - name: Build APK
         run: |
