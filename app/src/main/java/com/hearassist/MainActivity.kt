@@ -184,6 +184,11 @@ class MainActivity : AppCompatActivity() {
             override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) {
                 if (position != Settings.getAsrMode(this@MainActivity)) {
                     Settings.setAsrMode(this@MainActivity, position)
+                    // 引擎切换后同步预览控件可用状态（精准模式无预览）
+                    val realtime = position == Settings.ASR_REALTIME
+                    swPreview.isEnabled = realtime
+                    spnInterval.isEnabled = realtime && swPreview.isChecked
+                    if (!realtime) CaptionBus.setPartial("")
                     Toast.makeText(this@MainActivity, R.string.lang_restarted, Toast.LENGTH_SHORT).show()
                     restartServiceIfRunning()
                 }
