@@ -62,6 +62,16 @@ android {
     }
 }
 
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    testLogging {
+        events("failed", "skipped")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showExceptions = true
+        showCauses = true
+        showStackTraces = true
+    }
+}
+
 dependencies {
     // sherpa-onnx v2.0.1：VAD(Silero) + Whisper 离线识别 + 音频打标（环境音）
     // AAR 由 CI 在构建时下载到 app/libs/（见 .github/workflows/build-apk.yml）
