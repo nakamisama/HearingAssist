@@ -1,384 +1,356 @@
 package com.hearassist.service
 
-import android.app.AlertDialog
-import android.app.Notification
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
-import android.media.audiofx.AutomaticGainControl
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.hearassist.MainActivity
 import com.hearassist.R
+import com.hearassist.audio.AudioSessions
 import com.hearassist.audio.EnvSoundProcessor
+import com.hearassist.audio.MicrophoneCapture
 import com.hearassist.audio.StreamingProcessor
 import com.hearassist.audio.SttProcessor
 import com.hearassist.audio.VadProcessor
 import com.hearassist.audio.VoiceprintProcessor
+import com.hearassist.data.AppSessionController
 import com.hearassist.data.CaptionBus
+import com.hearassist.data.CellularConsent
 import com.hearassist.data.EngineStatus
 import com.hearassist.data.ModelManager
+import com.hearassist.data.SessionPolicy
 import com.hearassist.data.Settings
 import com.hearassist.data.VoiceprintStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlin.coroutines.resume
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.coroutineContext
 import kotlin.math.sqrt
 
-/**
- * 前台服务：录音 → VAD → (语音) SenseVoice 字幕 / (环境音开关开启时) 声音分类。
- * 使用 microphone 类型前台服务，保证后台持续收音。
- */
+/** 只在 App 可见且用户请求收听时工作，停止时等待在途推理结束后释放资源。 */
 class CaptionService : Service() {
-
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private var audioRecord: AudioRecord? = null
-    private var vad: VadProcessor? = null
-    private var stt: SttProcessor? = null
-    private var streaming: StreamingProcessor? = null
-    private var env: EnvSoundProcessor? = null
-    private var voiceprint: VoiceprintProcessor? = null
-    private var asrMode = Settings.ASR_ACCURATE
-    private val sttMutex = Mutex()
-    private val voiceprintMutex = Mutex()
-    private var agcEffect: AutomaticGainControl? = null
-    // 防止服务未销毁时重复收到启动命令导致启动多套录音引擎
-    private var engineStarted = false
-
-    // 环境音环形缓冲（最近 2 秒音频）
-    private val envBuffer = FloatArray(ENV_BUFFER_SIZE)
-    private var envWritePos = 0
-    private var envFilled = 0
-    private var envWindowCount = 0
-    private val lastAlertAt = HashMap<String, Long>()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val capture = AtomicReference<MicrophoneCapture?>(null)
+    private var engineJob: Job? = null
+    private var engineTicket: SessionPolicy.CaptionTicket? = null
+    private var destroyed = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    override fun onCreate() {
-        super.onCreate()
-        startInForeground()
-    }
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        CaptionBus.setRunning(true)
-        // 仅首次启动引擎，避免重复 start 命令导致多套录音循环/模型
-        if (!engineStarted) {
-            engineStarted = true
-            CaptionBus.setStatus(EngineStatus.STARTING)
-            scope.launch { runEngine() }
+        val ticket = AppSessionController.ticketFrom(intent)
+        if (ticket == null) {
+            if (engineTicket?.let(AppSessionController::allowsCaption) != true) {
+                requestStop()
+                stopSelfResult(startId)
+            }
+            return START_NOT_STICKY
         }
-        return START_STICKY
+        if (ticket == engineTicket && engineJob?.isActive == true) return START_NOT_STICKY
+        requestStop()
+        engineTicket = ticket
+        try {
+            startInForeground()
+        } catch (e: RuntimeException) {
+            Log.e(TAG, "无法创建麦克风前台服务", e)
+            AppSessionController.serviceEnded(ticket, "启动受系统限制，请回到应用后点击开始")
+            stopSelfResult(startId)
+            return START_NOT_STICKY
+        }
+        engineJob = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                withContext(Dispatchers.Default) {
+                    AudioSessions.gate.run(resources = { EngineResources() }) { owned ->
+                        runEngine(ticket, owned)
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "收听失败", e)
+                AppSessionController.publish(ticket) {
+                    AppSessionController.stopCaption()
+                    CaptionBus.setError(e.message ?: "无法启动收听，请重试")
+                }
+            } finally {
+                withContext(NonCancellable + Dispatchers.Main.immediate) {
+                    AppSessionController.serviceEnded(ticket)
+                    if (!destroyed && engineTicket == ticket) {
+                        // 正常停机或异常退出时不留下一条假“监听中”通知。
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        stopSelfResult(startId)
+                    }
+                }
+            }
+        }
+        AppSessionController.attachEngine(ticket) { requestStop() }
+        engineJob?.start()
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
-        CaptionBus.setRunning(false)
-        CaptionBus.setStatus(EngineStatus.IDLE)
-        engineStarted = false
+        destroyed = true
+        requestStop()
+        engineTicket?.let { AppSessionController.serviceEnded(it) }
         scope.cancel()
-        try { audioRecord?.stop() } catch (_: Exception) {}
-        try { audioRecord?.release() } catch (_: Exception) {}
-        audioRecord = null
-        try { vad?.close() } catch (_: Exception) {}
-        try { stt?.close() } catch (_: Exception) {}
-        try { streaming?.close() } catch (_: Exception) {}
-        try { env?.close() } catch (_: Exception) {}
-        try { voiceprint?.close() } catch (_: Exception) {}
-        try { agcEffect?.release() } catch (_: Exception) {}
-        agcEffect = null
-        vad = null; stt = null; streaming = null; env = null; voiceprint = null
-        CaptionBus.setPartial("")
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        // 模型由 EngineResources 的所有者释放，不在主线程与推理抢着 close。
         super.onDestroy()
     }
 
-    // ---------- 引擎 ----------
+    private fun requestStop() {
+        engineJob?.cancel()
+        capture.get()?.requestStop()
+    }
 
-    private suspend fun runEngine() = withContext(Dispatchers.Default) {
-        val ctx = this@CaptionService
-        asrMode = Settings.getAsrMode(ctx)
-        // 按需下载所需模型（已缓存则秒过，不重复下载），国内镜像优先。
-        // 默认实时只下小模型(streaming)；大模型 sensevoice 仅精准模式或已缓存时才用，不默认下载。
+    private suspend fun checkSession(ticket: SessionPolicy.CaptionTicket) {
+        coroutineContext.ensureActive()
+        AppSessionController.ensureCaptionAllowed(ticket)
+    }
+
+    private suspend fun runEngine(ticket: SessionPolicy.CaptionTicket, owned: EngineResources) {
+        checkSession(ticket)
+        val mode = Settings.getAsrMode(this)
+        val entries = VoiceprintStore.load(this)
+        val useVoiceprint = Settings.isVoiceprintEnabled(this) && entries.isNotEmpty()
+        val useEnvironment = CaptionBus.envEnabled.value
         val needed = mutableListOf("vad")
-        if (asrMode == Settings.ASR_REALTIME) {
+        if (mode == Settings.ASR_REALTIME) {
             needed.add("streaming")
-            if (ModelManager.isReady(ctx, "sensevoice")) needed.add("sensevoice")
+            if (ModelManager.isReady(this, "sensevoice")) needed.add("sensevoice")
         } else {
             needed.add("sensevoice")
         }
-        if (CaptionBus.envEnabled.value) needed.add("audio_tagging")
-        val vpEntries = VoiceprintStore.load(ctx)
-        if (Settings.isVoiceprintEnabled(ctx) && vpEntries.isNotEmpty()) needed.add("voiceprint")
-        val ready = ModelManager.ensureModels(ctx, needed, { _, msg -> CaptionBus.setStartMsg(msg) }) {
-            confirmCellularDownload()
+        if (useEnvironment) needed.add("audio_tagging")
+        if (useVoiceprint) needed.add("voiceprint")
+        val ready = ModelManager.ensureModels(this, needed, { _, message ->
+            AppSessionController.publish(ticket) { CaptionBus.setStartMsg(message) }
+        }) {
+            CellularConsent.request { AppSessionController.allowsCaption(ticket) }
         }
-        if (!ready) {
-            Log.e(TAG, "模型下载失败或用户取消")
-            stopSelf()
-            return@withContext
+        checkSession(ticket)
+        check(ready) { "模型未准备好，下载已取消或失败" }
+        AppSessionController.publish(ticket) { CaptionBus.setStartMsg("正在加载模型，请稍后…") }
+        owned.vad = VadProcessor(this)
+        checkSession(ticket)
+        if (mode == Settings.ASR_REALTIME) owned.streaming = StreamingProcessor(this)
+        checkSession(ticket)
+        if (mode == Settings.ASR_ACCURATE || ModelManager.isReady(this, "sensevoice")) {
+            owned.stt = SttProcessor(this, Settings.getLangMode(this))
         }
-        try {
-            vad = VadProcessor(ctx)
-            // 实时模式额外加载流式引擎做逐字预览；最终定稿两种模式都用 SenseVoice（准确+标点）
-            if (asrMode == Settings.ASR_REALTIME) streaming = StreamingProcessor(ctx)
-            // 大模型仅精准模式或已缓存时加载；实时未下载大模型则用流式定稿
-            if (asrMode == Settings.ASR_ACCURATE || ModelManager.isReady(ctx, "sensevoice")) {
-                stt = SttProcessor(ctx, Settings.getLangMode(ctx))
-            }
-            if (CaptionBus.envEnabled.value) env = EnvSoundProcessor(ctx)
-            if (Settings.isVoiceprintEnabled(ctx) && vpEntries.isNotEmpty()) {
-                voiceprint = VoiceprintProcessor(ctx, vpEntries)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "模型初始化失败", e)
-            stopSelf()
-            return@withContext
-        }
-        // 模型加载完成，自动开始收听
-        CaptionBus.setStatus(EngineStatus.LISTENING)
-        audioLoop()
+        checkSession(ticket)
+        if (useEnvironment) owned.environment = EnvSoundProcessor(this)
+        checkSession(ticket)
+        if (useVoiceprint) owned.voiceprint = VoiceprintProcessor(this, entries)
+        checkSession(ticket)
+        audioLoop(ticket, owned)
     }
 
-    /** 流量下载模型需两次确认：①提示切WiFi ②确认产生费用。WiFi 时不会走到这里。 */
-    private suspend fun confirmCellularDownload(): Boolean {
-        val first = withContext(Dispatchers.Main) {
-            suspendCancellableCoroutine<Boolean> { cont ->
-                AlertDialog.Builder(this@CaptionService)
-                    .setTitle(R.string.cellular_title)
-                    .setMessage(R.string.cellular_switch_wifi)
-                    .setPositiveButton(R.string.cellular_continue) { _, _ -> cont.resume(true) }
-                    .setNegativeButton(R.string.common_cancel) { _, _ -> cont.resume(false) }
-                    .setOnCancelListener { cont.resume(false) }
-                    .show()
-            }
+    private data class Work(val samples: FloatArray, val fallback: String?)
+
+    private suspend fun audioLoop(ticket: SessionPolicy.CaptionTicket, owned: EngineResources) = coroutineScope {
+        val microphone = MicrophoneCapture(hardwareAgc = true)
+        owned.microphone = microphone
+        capture.set(microphone)
+        checkSession(ticket)
+        check(ContextCompat.checkSelfPermission(this@CaptionService, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED) { "麦克风权限已撤销" }
+        microphone.start()
+        checkSession(ticket)
+        AppSessionController.publish(ticket) {
+            CaptionBus.setStartMsg("")
+            CaptionBus.setStatus(EngineStatus.LISTENING)
         }
-        if (!first) return false
-        return withContext(Dispatchers.Main) {
-            suspendCancellableCoroutine<Boolean> { cont ->
-                AlertDialog.Builder(this@CaptionService)
-                    .setTitle(R.string.cellular_cost_title)
-                    .setMessage(R.string.cellular_cost_message)
-                    .setPositiveButton(R.string.cellular_confirm_download) { _, _ -> cont.resume(true) }
-                    .setNegativeButton(R.string.common_cancel) { _, _ -> cont.resume(false) }
-                    .setOnCancelListener { cont.resume(false) }
-                    .show()
-            }
-        }
-    }
-
-    private suspend fun audioLoop() = withContext(Dispatchers.IO) {
-        val windowSize = vad?.windowSize ?: return@withContext
-        val minBuf = AudioRecord.getMinBufferSize(
-            VadProcessor.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
-        )
-        val rec = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_RECOGNITION,
-            VadProcessor.SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            maxOf(minBuf, 16384),
-        )
-        if (rec.state != AudioRecord.STATE_INITIALIZED) {
-            Log.e(TAG, "AudioRecord 初始化失败")
-            rec.release()
-            stopSelf()
-            return@withContext
-        }
-        audioRecord = rec
-        rec.startRecording()
-        enableHardwareAgc(rec)
-
-        val shorts = ShortArray(windowSize)
-        val floats = FloatArray(windowSize)
-
-        try {
-            while (isActive && CaptionBus.running.value) {
-                val n = rec.read(shorts, 0, shorts.size)  // 阻塞式读取，32ms 一帧
-                if (n <= 0) continue
-                for (i in 0 until n) floats[i] = shorts[i] / 32768f
-                applyAgc(floats)  // 远场/小声说话自动放大信号
-                val chunk = if (n == floats.size) floats else floats.copyOf(n)
-
-                val v = vad ?: break
-
-                // 1) VAD 调度：有人说话 → 切段；否则 → 环境音缓冲
-                v.accept(chunk)
-
-                // 2) VAD 切出的完整语音段 → SenseVoice 定稿（准确+标点+声纹），两种模式相同
-                while (v.hasSegments()) {
-                    val seg = v.nextSegment()
-                    // 实时模式：VAD 切段即重置流式预览，避免定稿延迟期间旧句预览残留/重显
-                    if (asrMode == Settings.ASR_REALTIME) {
-                        streaming?.reset()
-                        CaptionBus.setPartial("")
+        val vad = requireNotNull(owned.vad)
+        val queue = Channel<Work>(3)
+        val worker = launch(Dispatchers.Default) {
+            for (work in queue) {
+                checkSession(ticket)
+                AppSessionController.publish(ticket) { CaptionBus.setStatus(EngineStatus.RECOGNIZING) }
+                try {
+                    val text = owned.stt?.recognize(work.samples)?.takeIf { it.isNotBlank() }
+                        ?: work.fallback.orEmpty()
+                    checkSession(ticket)
+                    if (text.isNotBlank()) {
+                        val vp = owned.voiceprint
+                        val embedding = vp?.extract(work.samples)
+                        checkSession(ticket)
+                        val name = if (embedding != null) vp?.search(embedding) else null
+                        val color = if (name != null) vp?.colorOf(name) ?: 0 else 0
+                        AppSessionController.publish(ticket) { CaptionBus.addSubtitle(text, name, color) }
                     }
-                    launchStt(seg.samples, seg.samples.size)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e(TAG, "语音段处理失败", e)
+                    AppSessionController.publish(ticket) { CaptionBus.setError("这段语音识别失败，请重试") }
+                } finally {
+                    AppSessionController.publish(ticket) { CaptionBus.setStatus(EngineStatus.LISTENING) }
                 }
+            }
+        }
+        var gain = 1f
+        val environmentBuffer = SampleBuffer(32000)
+        val speakerBuffer = SampleBuffer(8 * VadProcessor.SAMPLE_RATE)
+        val alertAt = HashMap<String, Long>()
+        var environmentFrames = 0
 
-                // 2.5) 实时模式：流式逐字预览；有大模型则定稿由 SenseVoice 替换，无大模型则流式端点直接定稿
-                if (asrMode == Settings.ASR_REALTIME) {
-                    val s = streaming
-                    if (s != null) {
-                        val fin = s.accept(chunk)
-                        if (stt == null && fin != null) {
-                            CaptionBus.addSubtitle(fin)
-                            CaptionBus.setPartial("")
+        fun enqueue(work: Work) {
+            if (queue.trySend(work).isSuccess) return
+            // 录音不能等待慢推理；最多保留三段，避免积压吃光内存。
+            if (queue.tryReceive().getOrNull() != null) {
+                Log.w(TAG, "识别队列积压，跳过最旧的待处理段")
+                AppSessionController.publish(ticket) { CaptionBus.setError("识别处理较慢，已跳过一段积压语音") }
+            }
+            queue.trySend(work)
+        }
+
+        try {
+            while (isActive) {
+                checkSession(ticket)
+                val samples = microphone.read()
+                if (samples.isEmpty()) continue
+                checkSession(ticket)
+                val level = rms(samples)
+                val desired = if (level > 1e-4f) (0.06f / level).coerceIn(1f, 6f) else gain
+                gain = gain * 0.85f + desired * 0.15f
+                for (i in samples.indices) samples[i] = (samples[i] * gain).coerceIn(-0.98f, 0.98f)
+                val stream = owned.streaming
+                val finalText = stream?.accept(samples)
+                checkSession(ticket)
+                vad.accept(samples)
+                if (owned.stt == null && owned.voiceprint != null && vad.isSpeechDetected()) {
+                    speakerBuffer.append(samples)
+                }
+                while (vad.hasSegments()) {
+                    checkSession(ticket)
+                    val segment = vad.nextSegment()
+                    // 小模型的端点比 VAD 慢，不能提前 reset，否则永远丢失正式字幕。
+                    if (owned.stt != null) {
+                        val fallback = finalText ?: stream?.partial()
+                        enqueue(Work(segment.samples, fallback))
+                        stream?.reset()
+                    }
+                }
+                if (stream != null) {
+                    if (owned.stt == null && !finalText.isNullOrBlank()) {
+                        if (owned.voiceprint != null) {
+                            enqueue(Work(speakerBuffer.snapshot(), finalText))
                         } else {
-                            CaptionBus.setPartial(s.partial())
+                            AppSessionController.publish(ticket) { CaptionBus.addSubtitle(finalText) }
+                        }
+                        speakerBuffer.clear()
+                    }
+                    val partial = stream.partial()
+                    // 只有录音循环拥有预览；旧的定稿协程不再清空下一句预览。
+                    AppSessionController.publish(ticket) { CaptionBus.setPartial(partial) }
+                }
+                if (owned.environment != null) {
+                    if (vad.isSpeechDetected()) {
+                        environmentBuffer.clear()
+                        environmentFrames = 0
+                    } else {
+                        environmentBuffer.append(samples)
+                        if (++environmentFrames >= 64) {
+                            environmentFrames = 0
+                            val snapshot = environmentBuffer.snapshot()
+                            if (snapshot.isNotEmpty() && rms(snapshot) >= 0.005f) {
+                                val event = owned.environment?.detect(snapshot)
+                                checkSession(ticket)
+                                if (event != null) {
+                                    val now = SystemClock.elapsedRealtime()
+                                    if (now - (alertAt[event.name] ?: -60000L) >= 60000L) {
+                                        alertAt[event.name] = now
+                                        AppSessionController.publish(ticket) {
+                                            CaptionBus.pushEnvEvent(EnvSoundProcessor.zh(event.name))
+                                            vibrate()
+                                        }
+                                        environmentBuffer.clear()
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-
-                // 3) 环境音识别（开关开启时）
-                if (CaptionBus.envEnabled.value && env != null) {
-                    appendEnv(chunk)
-                    envWindowCount++
-                    if (envWindowCount >= ENV_EVERY_WINDOWS) {
-                        envWindowCount = 0
-                        classifyEnvironment()
-                    }
-                } else {
-                    envFilled = 0; envWritePos = 0
-                }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "音频循环异常", e)
         } finally {
-            try { rec.stop() } catch (_: Exception) {}
-            rec.release()
+            microphone.requestStop()
+            queue.cancel()
+            withContext(NonCancellable) { worker.cancelAndJoin() }
+            capture.compareAndSet(microphone, null)
         }
     }
 
-    private fun launchStt(samples: FloatArray, durationSamples: Int) {
-        scope.launch {
-            CaptionBus.setStatus(EngineStatus.RECOGNIZING)
-            try {
-                val text = sttMutex.withLock { stt?.recognize(samples) ?: "" }
-                if (text.isNotBlank()) {
-                    var speaker: String? = null
-                    var color = 0
-                    val vp = voiceprint
-                    // 声纹比对：仅对足够长的语音段做（短句声纹不可靠）
-                    if (vp != null && durationSamples >= VoiceprintProcessor.MIN_SEGMENT_SAMPLES) {
-                        val emb = voiceprintMutex.withLock { vp.extract(samples) }
-                        if (emb != null) {
-                            speaker = vp.search(emb)
-                            if (speaker != null) color = vp.colorOf(speaker)
-                        }
-                    }
-                    CaptionBus.addSubtitle(text, speaker, color)
-                }
-                // 本段处理完即清空逐字预览（无论是否产出定稿），避免空识别时预览残留
-                CaptionBus.setPartial("")
-            } catch (e: Exception) {
-                Log.e(TAG, "识别失败", e)
-            } finally {
-                CaptionBus.setStatus(EngineStatus.LISTENING)
+    private class EngineResources : AutoCloseable {
+        var vad: VadProcessor? = null
+        var stt: SttProcessor? = null
+        var streaming: StreamingProcessor? = null
+        var environment: EnvSoundProcessor? = null
+        var voiceprint: VoiceprintProcessor? = null
+        var microphone: MicrophoneCapture? = null
+
+        override fun close() {
+            listOf(microphone, voiceprint, environment, stt, streaming, vad).forEach {
+                try { it?.close() } catch (e: Exception) { Log.w(TAG, "释放收听资源失败", e) }
+            }
+            microphone = null
+            voiceprint = null
+            environment = null
+            stt = null
+            streaming = null
+            vad = null
+        }
+    }
+
+    private class SampleBuffer(private val capacity: Int) {
+        private val samples = FloatArray(capacity)
+        private var cursor = 0
+        private var count = 0
+        fun append(chunk: FloatArray) {
+            for (sample in chunk) {
+                samples[cursor] = sample
+                cursor = (cursor + 1) % capacity
+                count = (count + 1).coerceAtMost(capacity)
             }
         }
-    }
-
-    // ---------- 增益控制 ----------
-
-    /** 尝试开启系统级硬件 AGC（设备不支持则静默忽略） */
-    private fun enableHardwareAgc(rec: AudioRecord) {
-        try {
-            if (AutomaticGainControl.isAvailable()) {
-                agcEffect = AutomaticGainControl.create(rec.audioSessionId).apply { setEnabled(true) }
-            }
-        } catch (_: Exception) {
+        fun snapshot(): FloatArray = FloatArray(count) {
+            samples[(cursor - count + capacity + it) % capacity]
         }
+        fun clear() { cursor = 0; count = 0 }
     }
-
-    /**
-     * 软件自动增益：目标把语音 RMS 归一到 0.06，最大放大 6 倍。
-     * 增益带平滑（时间常数约 0.2s），防止忽大忽小；硬限幅防削波。
-     */
-    private var agcGain = 1.0f
-
-    private fun applyAgc(samples: FloatArray) {
-        var sum = 0.0
-        for (s in samples) sum += s.toDouble() * s
-        val rms = sqrt(sum / samples.size).toFloat()
-        val desired = if (rms > 1e-4f) {
-            (AGC_TARGET_RMS / rms).coerceIn(1.0f, AGC_MAX_GAIN)
-        } else {
-            agcGain
-        }
-        agcGain = agcGain * 0.85f + desired * 0.15f
-        for (i in samples.indices) {
-            samples[i] = (samples[i] * agcGain).coerceIn(-0.98f, 0.98f)
-        }
-    }
-
-    // ---------- 环境音 ----------
-
-    private fun appendEnv(chunk: FloatArray) {
-        for (s in chunk) {
-            envBuffer[envWritePos] = s
-            envWritePos = (envWritePos + 1) % ENV_BUFFER_SIZE
-            if (envFilled < ENV_BUFFER_SIZE) envFilled++
-        }
-    }
-
-    private fun snapshotEnv(): FloatArray? {
-        if (envFilled < EnvSoundProcessor.MIN_SAMPLES) return null
-        return if (envFilled < ENV_BUFFER_SIZE) {
-            envBuffer.copyOf(envFilled)
-        } else {
-            FloatArray(ENV_BUFFER_SIZE).also { out ->
-                // 环形缓冲按时间顺序展开
-                val head = envWritePos
-                envBuffer.copyInto(out, 0, head, ENV_BUFFER_SIZE)
-                envBuffer.copyInto(out, ENV_BUFFER_SIZE - head, 0, head)
-            }
-        }
-    }
-
-    private fun classifyEnvironment() {
-        val v = vad ?: return
-        // 正在说话时不做环境音判断（那段音频属于字幕管线）
-        if (v.isSpeechDetected()) return
-        val snapshot = snapshotEnv() ?: return
-        if (rms(snapshot) < NOISE_FLOOR) return  // 安静环境，跳过
-
-        val event = env?.detect(snapshot) ?: return
-        val now = System.currentTimeMillis()
-        val last = lastAlertAt[event.name] ?: 0L
-        if (now - last < ALERT_COOLDOWN_MS) return  // 同类声音 1 分钟内不重复提醒
-
-        lastAlertAt[event.name] = now
-        CaptionBus.pushEnvEvent(EnvSoundProcessor.zh(event.name))
-        vibrate()
-        clearEnvBuffer()
-    }
-
-    private fun clearEnvBuffer() { envFilled = 0; envWritePos = 0 }
 
     private fun rms(samples: FloatArray): Float {
+        if (samples.isEmpty()) return 0f
         var sum = 0.0
-        for (s in samples) sum += s.toDouble() * s
+        for (sample in samples) sum += sample.toDouble() * sample
         return sqrt(sum / samples.size).toFloat()
     }
-
-    // ---------- 系统交互 ----------
 
     private fun vibrate() {
         val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -392,17 +364,17 @@ class CaptionService : Service() {
 
     private fun startInForeground() {
         val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, getString(R.string.notif_channel), NotificationManager.IMPORTANCE_LOW)
+        manager.createNotificationChannel(NotificationChannel(
+            CHANNEL_ID, getString(R.string.notif_channel), NotificationManager.IMPORTANCE_LOW,
+        ))
+        val pending = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
         )
-        val pi = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
-        )
-        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_mic)
             .setContentTitle(getString(R.string.notif_title))
             .setContentText(getString(R.string.notif_text))
-            .setContentIntent(pi)
+            .setContentIntent(pending)
             .setOngoing(true)
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -416,13 +388,5 @@ class CaptionService : Service() {
         private const val TAG = "CaptionService"
         private const val CHANNEL_ID = "caption_service"
         private const val NOTIF_ID = 1
-
-        private const val ENV_BUFFER_SIZE = 32000        // 2 秒 @16kHz
-        private const val ENV_EVERY_WINDOWS = 64         // 每 ~2 秒分类一次
-        private const val NOISE_FLOOR = 0.005f
-        private const val ALERT_COOLDOWN_MS = 60_000L
-
-        private const val AGC_TARGET_RMS = 0.06f
-        private const val AGC_MAX_GAIN = 6.0f
     }
 }

@@ -20,8 +20,8 @@ android {
         }
     }
 
-    // 固定 release 签名：密钥提交在仓库根目录，所有构建用同一密钥，
-    // 保证 APK 可直接覆盖更新（个人自用 App，密钥公开无安全风险）
+    // 沿用现有签名以兼容已安装版本。现有密钥曾入库，需要另行规划密钥迁移；
+    // 公开签名私钥存在冒用风险，不能将个人自用等同于无风险。
     signingConfigs {
         create("release") {
             storeFile = rootProject.file("release.keystore")
@@ -71,7 +71,10 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
+    implementation("androidx.lifecycle:lifecycle-process:2.8.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
 
     // 繁体 → 简体中文转换（纯 Java 实现，无额外体积负担）
     implementation("com.github.houbb:opencc4j:1.8.0")

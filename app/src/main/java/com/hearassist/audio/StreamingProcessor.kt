@@ -30,7 +30,12 @@ class StreamingProcessor(ctx: Context) : AutoCloseable {
         ),
     )
 
-    private val stream = recognizer.createStream()
+    private val stream = try {
+        recognizer.createStream()
+    } catch (error: Throwable) {
+        recognizer.release()
+        throw error
+    }
 
     /** 喂一帧音频并解码。若到达端点（句末）返回该句简体文本，否则返回 null。 */
     fun accept(samples: FloatArray): String? {

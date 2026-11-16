@@ -1,6 +1,7 @@
 package com.hearassist.data
 
 import android.content.Context
+import android.util.AtomicFile
 import com.hearassist.audio.VoiceprintProcessor
 import org.json.JSONArray
 import org.json.JSONObject
@@ -11,6 +12,7 @@ object VoiceprintStore {
 
     private fun file(ctx: Context): File = File(ctx.filesDir, "voiceprints.json")
 
+    @Synchronized
     fun save(ctx: Context, entries: List<VoiceprintProcessor.SpeakerEntry>) {
         val arr = JSONArray()
         entries.forEach { e ->
@@ -27,14 +29,24 @@ object VoiceprintStore {
                     .put("embeddings", embArr)
             )
         }
-        file(ctx).writeText(JSONObject().put("speakers", arr).toString())
+        val bytes = JSONObject().put("speakers", arr).toString().toByteArray(Charsets.UTF_8)
+        val storage = AtomicFile(file(ctx))
+        val stream = storage.startWrite()
+        try {
+            stream.write(bytes)
+            storage.finishWrite(stream)
+        } catch (failure: Throwable) {
+            storage.failWrite(stream)
+            throw failure
+        }
     }
 
+    @Synchronized
     fun load(ctx: Context): List<VoiceprintProcessor.SpeakerEntry> {
-        val f = file(ctx)
-        if (!f.exists()) return emptyList()
+        val storage = AtomicFile(file(ctx))
         return try {
-            val root = JSONObject(f.readText())
+            // openRead 会恢复旧 AtomicFile 备份；兼容原有 voiceprints.json。
+            val root = JSONObject(storage.openRead().bufferedReader(Charsets.UTF_8).use { it.readText() })
             val arr = root.optJSONArray("speakers") ?: return emptyList()
             (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)

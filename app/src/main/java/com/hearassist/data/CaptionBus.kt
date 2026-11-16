@@ -34,6 +34,18 @@ object CaptionBus {
     val startMsg: StateFlow<String> = _startMsg
     fun setStartMsg(t: String) { _startMsg.value = t }
 
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error
+    fun setError(message: String?) { _error.value = message }
+
+    fun stopUi() {
+        _running.value = false
+        _status.value = EngineStatus.IDLE
+        _partial.value = ""
+        _startMsg.value = ""
+        _envEvent.value = null
+    }
+
     /** 最近检测到的环境音事件（如“门铃”），null 表示无 */
     private val _envEvent = MutableStateFlow<String?>(null)
     val envEvent: StateFlow<String?> = _envEvent

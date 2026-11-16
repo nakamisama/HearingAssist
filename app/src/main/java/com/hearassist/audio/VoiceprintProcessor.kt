@@ -36,13 +36,27 @@ class VoiceprintProcessor(
         ),
     )
 
-    private val manager = SpeakerEmbeddingManager(extractor.dim())
+    private val manager = try {
+        SpeakerEmbeddingManager(extractor.dim())
+    } catch (error: Throwable) {
+        extractor.release()
+        throw error
+    }
     private val nameColor = HashMap<String, Int>()
 
     init {
-        preloaded.forEach { entry ->
-            manager.add(entry.name, entry.embeddings.toTypedArray())
-            nameColor[entry.name] = entry.color
+        try {
+            preloaded.forEach { entry ->
+                if (entry.embeddings.isNotEmpty() && entry.embeddings.all { embedding ->
+                        embedding.size == extractor.dim() && embedding.all { it.isFinite() }
+                    } && manager.add(entry.name, entry.embeddings.toTypedArray())) {
+                    nameColor[entry.name] = entry.color
+                }
+            }
+        } catch (error: Throwable) {
+            manager.release()
+            extractor.release()
+            throw error
         }
     }
 

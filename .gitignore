@@ -3,8 +3,9 @@
 build/
 app/build/
 
-# IDE
+# IDE / 本机工具状态
 .idea/
+.zcode/
 *.iml
 local.properties
 

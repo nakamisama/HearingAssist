@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, fix/background-stop ]
   workflow_dispatch:
 
 permissions:
@@ -44,12 +44,29 @@ jobs:
             https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01.tar.bz2
           ls -la app/src/main/assets/bundled/
 
-      - name: Build APK
+      - name: Test and lint
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace \
+          ./gradlew testReleaseUnitTest lintRelease --no-daemon --stacktrace \
             -PappVersionCode=${{ github.run_number }} 2>&1 | tee build-log.txt
           exit ${PIPESTATUS[0]}
+
+      - name: Build APK after verification
+        run: |
+          ./gradlew assembleRelease --no-daemon --stacktrace \
+            -PappVersionCode=${{ github.run_number }} 2>&1 | tee -a build-log.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+            app/build/reports/lint-results-release.*
+          if-no-files-found: ignore
 
       # 构建失败时上传完整日志，便于远程排错
       - name: Upload build log (on failure)
@@ -80,22 +97,22 @@ jobs:
 
       # 每次推送自动发布一个 Release，方便手机/浏览器直接下载
       - name: Publish to GitHub Releases
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: 自动构建 #${{ github.run_number }}
+          name: '自动构建 #${{ github.run_number }}'
           files: app/build/outputs/apk/release/*.apk
           body: |
-            每次推送 main 自动构建的 APK。
-            下载 app-release.apk 安装即可（无需签名验证，已用 debug 签名）。
+            测试与构建通过后的 APK。使用现有固定签名，可覆盖安装相同签名的版本。
+            本构建未代替荣耀 X50 真机验收；请确认切后台停止、回前台手动开始。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # 把最新版本号写入 main 分支 version.json，供 App 经 raw.githubusercontent.com 检测更新
       # （raw 源在国内通常比 api.github.com 更可达，作为更新检测的主源）
       - name: Publish version.json to main
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         run: |
           git config user.name "build-bot"
           git config user.email "bot@users.noreply.github.com"
