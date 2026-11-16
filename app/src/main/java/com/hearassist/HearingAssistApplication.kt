@@ -27,7 +27,7 @@ class HearingAssistApplication : Application(), DefaultLifecycleObserver, Applic
     }
 
     override fun onCreate() {
-        super.onCreate()
+        super<Application>.onCreate()
         AppSessionController.initialize(this)
         registerActivityLifecycleCallbacks(this)
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)

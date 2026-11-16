@@ -537,7 +537,7 @@ class MainActivity : AppCompatActivity() {
         }
         if (previewRenderJob?.isActive == true) return
         previewRenderJob = lifecycleScope.launch {
-            val remaining = Settings.getPreviewInterval(this).toLong() - (SystemClock.elapsedRealtime() - lastPreviewRender)
+            val remaining = Settings.getPreviewInterval(this@MainActivity).toLong() - (SystemClock.elapsedRealtime() - lastPreviewRender)
             if (remaining > 0) delay(remaining)
             if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
                 lastPreviewRender = SystemClock.elapsedRealtime()
