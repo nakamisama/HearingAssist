@@ -332,7 +332,13 @@ class ExclusiveAudioSessionTest {
                 advanceTimeBy(1)
                 runCurrent()
 
-                assertSame(expected, failure.await())
+                val actual = failure.await()
+                // Coroutine stack-trace recovery may copy the exception and retain
+                // the original as its cause; the ownership contract is unchanged.
+                assertEquals(expected.javaClass, actual.javaClass)
+                assertEquals(expected.message, actual.message)
+                assertTrue("The original failure must remain in the cause chain",
+                    generateSequence(actual) { it.cause }.take(16).any { it === expected })
                 assertEquals("recovered", next.await())
                 assertTrue(inference.isCompleted)
                 assertFalse(inferenceInFlight)
