@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ main, master, fix/background-stop, fix/scroll-version ]
+    branches: [ main, master, fix/background-stop, fix/scroll-version, fix/update-download ]
   workflow_dispatch:
 
 permissions:

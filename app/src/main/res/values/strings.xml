@@ -57,6 +57,13 @@
     <string name="cellular_confirm_download">确认下载</string>
     <string name="common_cancel">取消</string>
     <string name="update_downloading">正在下载更新…</string>
+    <string name="update_connecting_source">正在连接 %1$s（%2$d/%3$d）…</string>
+    <string name="update_receiving_source">正在从 %1$s 下载…</string>
+    <string name="update_receiving_unknown_size">正在从 %1$s 下载，文件大小未知，暂无法显示百分比…</string>
+    <string name="update_transfer_details">来源：%1$s\n已下载 %2$s / %3$s\n速率：%4$s/s</string>
+    <string name="update_transfer_unknown_total">来源：%1$s\n已下载 %2$s（总大小未知）\n速率：%3$s/s</string>
+    <string name="update_switching_source">此下载源未完成，正在切换备用源…</string>
+    <string name="update_verifying_apk">下载完成，正在校验安装包…</string>
     <string name="update_download_fail">下载失败，请检查网络后重试</string>
     <string name="update_install_perm_title">需要安装权限</string>
     <string name="update_install_perm_message">请允许本应用"安装未知应用"，然后返回继续安装更新。</string>

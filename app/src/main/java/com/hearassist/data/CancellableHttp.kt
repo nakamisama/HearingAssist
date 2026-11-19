@@ -102,6 +102,7 @@ object CancellableHttp {
         expectedBytes: Long = -1,
         checkTransfer: () -> Unit = {},
         onProgress: (Int) -> Unit = {},
+        onBytes: (Long, Long) -> Unit = { _, _ -> },
     ): Long = withContext(Dispatchers.IO) {
         if (expectedBytes < -1 || expectedBytes > MAX_TRANSFER_BYTES) {
             throw IOException("Invalid or excessive transfer length")
@@ -126,6 +127,7 @@ object CancellableHttp {
                 output.write(buffer, 0, count)
                 total += count
                 context.ensureActive()
+                onBytes(total, expectedBytes)
                 if (expectedBytes > 0) {
                     val progress = (total * 100 / expectedBytes).toInt().coerceIn(0, 99)
                     if (progress != lastProgress) {

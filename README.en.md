@@ -59,9 +59,9 @@ An Android live-captioning app for deaf and hard-of-hearing people. It turns mic
 ### Download and network rules
 
 - **Model downloads:** required models may download automatically on unmetered Wi-Fi or Ethernet. Mobile data or metered connections require two confirmations: first recommending Wi-Fi, then warning about potential data charges.
-- **APK downloads:** Wi-Fi only. A network change or moving the app to the background stops the download. The user can retry after returning.
+- **APK downloads:** Wi-Fi only. Connecting, switching sources, and validation show explicit status; transfers show received size and a sampled transfer rate. If the server omits the total length, no misleading percentage is shown. A network change or moving the app to the background stops the download. The user can retry after returning.
 - **Version checks:** fetch version metadata, not the APK, and are not restricted to Wi-Fi.
-- **Default update channels:** version checks and APK downloads consistently try `ghproxy.net`, then `gh-proxy.com`, and use official GitHub connections only as a fallback. They do not require the development computer's proxy on port 7897. These are third-party mirrors, not a domestic CDN operated by this project, and reachability on the phone is not guaranteed. Model downloads also remain mirror-first.
+- **Default update channels:** version checks and APK downloads consistently try `gh-proxy.com`, then `ghproxy.net`, and use official GitHub connections only as a fallback. They do not require the development computer's proxy on port 7897. These are third-party mirrors, not a domestic CDN operated by this project, and reachability on the phone is not guaranteed. Model downloads also remain mirror-first.
 - Updates use **a new APK installed over the existing app**, not silent installation or dynamically downloaded code patches. The system installer may require permission to install unknown apps.
 
 In-place installation can preserve data when the package name, signature, and version requirements match. Early builds used different signatures and may not support in-place upgrades. Uninstalling removes app data.
@@ -112,9 +112,9 @@ The current workflow uses GitHub Actions; a local Android build environment is n
 - Before upgrading, old clients may still display build numbers. Their GitHub `/latest` fallback cannot parse named tags; upgrading relies on the retained old manifest or manual installation of the bridge release.
 - If publication succeeds only partially, do not overwrite an existing tag or fake a version. Inspect and recover the publication records manually; advance configuration only after complete success.
 
-The current configuration also validates pushes to `fix/background-stop` and `fix/scroll-version` and uploads artifacts without publishing a release. Manual `workflow_dispatch` runs can build a selected branch but do not publish a release either. Refer to the [actual workflow](.github/workflows/build-apk.yml).
+The current configuration also validates pushes to `fix/background-stop`, `fix/scroll-version`, and `fix/update-download` and uploads artifacts without publishing a release. Manual `workflow_dispatch` runs can build a selected branch but do not publish a release either. Refer to the [actual workflow](.github/workflows/build-apk.yml).
 
-There are currently **33 JUnit tests** covering session permissions, cancellation and resource-release ordering, temporary-file isolation, release metadata, and caption-following policy. They use simulated tasks, not real microphone input or JNI performance measurements. Python tests for release configuration also run in CI.
+There are currently **38 JUnit tests** covering session permissions, cancellation and resource-release ordering, temporary-file isolation, release metadata, and caption-following policy. They use simulated tasks, not real microphone input or JNI performance measurements. Python tests for release configuration also run in CI.
 
 ### Project layout
 

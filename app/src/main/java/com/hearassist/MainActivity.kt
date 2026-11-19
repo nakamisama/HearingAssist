@@ -15,6 +15,8 @@ import android.os.Environment
 import android.os.SystemClock
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
+import android.text.format.Formatter
+import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -43,6 +45,7 @@ import com.hearassist.data.AppSessionController
 import com.hearassist.data.CaptionBus
 import com.hearassist.data.CellularConsent
 import com.hearassist.data.CancellableHttp
+import com.hearassist.data.DownloadProgressMeter
 import com.hearassist.data.EngineStatus
 import com.hearassist.data.PendingApk
 import com.hearassist.data.ReleaseInfo
@@ -245,6 +248,8 @@ class MainActivity : AppCompatActivity() {
         val progress = ProgressDialog(this).apply {
             setTitle(R.string.update_downloading)
             setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
+            setMessage(getString(R.string.update_connecting_source, "gh-proxy.com", 1, 3))
+            isIndeterminate = true
             max = 100
             setCancelable(true)
             setButton(ProgressDialog.BUTTON_NEGATIVE, getString(R.string.common_cancel)) { _, _ -> downloadJob?.cancel() }
@@ -254,8 +259,14 @@ class MainActivity : AppCompatActivity() {
         downloadProgress = progress
         downloadJob = lifecycleScope.launch {
             try {
-                val file = downloadApk(latest, network, ticket) { percent ->
-                    runOnUiThread { if (visible(ticket)) progress.progress = percent }
+                val file = downloadApk(latest, network, ticket) { message, percent ->
+                    runOnUiThread {
+                        if (visible(ticket) && downloadProgress === progress && downloadJob?.isActive == true) {
+                            progress.isIndeterminate = percent == null
+                            if (percent != null) progress.progress = percent
+                            progress.setMessage(message)
+                        }
+                    }
                 }
                 if (visible(ticket)) {
                     if (file != null) installApk(file)
@@ -273,12 +284,14 @@ class MainActivity : AppCompatActivity() {
     private suspend fun <T> withRedirects(
         original: String,
         network: Network? = null,
+        connectTimeout: Int = 10000,
+        readTimeout: Int = 30000,
         block: suspend (HttpURLConnection) -> T,
     ): T {
         var url = original
         repeat(6) {
             try {
-                return CancellableHttp.withConnection(url, network, block = block)
+                return CancellableHttp.withConnection(url, network, connectTimeout, readTimeout, block)
             } catch (e: CancellableHttp.HttpStatusException) {
                 if (e.statusCode !in listOf(301, 302, 303, 307, 308) || e.location == null) throw e
                 val next = URL(URL(url), e.location)
@@ -293,38 +306,66 @@ class MainActivity : AppCompatActivity() {
         latest: ReleaseInfo,
         network: Network,
         ticket: SessionPolicy.VisibilityTicket,
-        onProgress: (Int) -> Unit,
+        onState: (String, Int?) -> Unit,
     ): File? = withContext(Dispatchers.IO) {
         val root = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return@withContext null
         val output = File(root, "update-${latest.versionCode}.apk")
         if (output.exists() && validUpdate(output, latest)) return@withContext output
-        for (url in UpdateChannels.apkUrls(latest)) {
+        val urls = UpdateChannels.apkUrls(latest)
+        for ((index, url) in urls.withIndex()) {
             currentCoroutineContext().ensureActive()
             if (!AppSessionController.isVisible(ticket) || wifiNetwork() != network) return@withContext null
+            val source = URL(url).host
+            onState(getString(R.string.update_connecting_source, source, index + 1, urls.size), null)
             var pending: PendingApk? = null
             try {
                 val download = PendingApk(root, latest.versionCode).also { pending = it }
                 val temporary = download.file
-                withRedirects(url, network) { connection ->
+                // 源端无响应时尽快切备用；没有明确总大小也显示已收字节，而不是假0%。
+                withRedirects(url, network, connectTimeout = 5000, readTimeout = 10000) { connection ->
                     val length = connection.contentLengthLong
                     if (length > root.usableSpace) throw IOException("存储空间不足")
+                    if (connection.contentType?.startsWith("text/html", ignoreCase = true) == true) {
+                        throw IOException("更新源返回网页而非安装包")
+                    }
+                    onState(getString(if (length > 0) R.string.update_receiving_source
+                        else R.string.update_receiving_unknown_size, source), if (length > 0) 0 else null)
+                    val meter = DownloadProgressMeter { SystemClock.elapsedRealtime() }
+                    var received = 0L
+                    fun showSample(sample: DownloadProgressMeter.Snapshot) {
+                        val downloaded = Formatter.formatShortFileSize(this@MainActivity, sample.received)
+                        val speed = Formatter.formatShortFileSize(this@MainActivity, sample.bytesPerSecond)
+                        val message = if (sample.total > 0) {
+                            getString(R.string.update_transfer_details, source, downloaded,
+                                Formatter.formatShortFileSize(this@MainActivity, sample.total), speed)
+                        } else getString(R.string.update_transfer_unknown_total, source, downloaded, speed)
+                        onState(message, sample.percent)
+                    }
                     FileOutputStream(temporary).use { stream ->
-                        CancellableHttp.copy(connection.inputStream, stream, length, {
-                            if (!AppSessionController.isVisible(ticket)) throw CancellationException("应用已进入后台")
-                            if (wifiNetwork() != network) throw IOException("WiFi 已断开，停止下载")
-                        }, onProgress)
+                        CancellableHttp.copy(connection.inputStream, stream, length,
+                            checkTransfer = {
+                                if (!AppSessionController.isVisible(ticket)) throw CancellationException("应用已进入后台")
+                                if (wifiNetwork() != network) throw IOException("WiFi 已断开，停止下载")
+                            }, onBytes = { bytes, total ->
+                                received = bytes
+                                meter.sample(bytes, total)?.let(::showSample)
+                            })
                         stream.fd.sync()
                     }
+                    meter.sample(received, length, finished = true)?.let(::showSample)
                 }
                 currentCoroutineContext().ensureActive()
+                onState(getString(R.string.update_verifying_apk), null)
                 if (!validUpdate(temporary, latest)) throw IOException("安装包校验失败")
                 currentCoroutineContext().ensureActive()
                 if (!AppSessionController.isVisible(ticket)) throw CancellationException("应用已进入后台")
                 return@withContext download.publish(output)
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 currentCoroutineContext().ensureActive()
+                Log.w("AppUpdate", "更新源未完成：$source", e)
+                if (index < urls.lastIndex) onState(getString(R.string.update_switching_source), null)
             } finally {
                 pending?.close()
             }
