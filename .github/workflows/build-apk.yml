@@ -2,20 +2,44 @@ name: Build APK
 
 on:
   push:
-    branches: [ main, master, fix/background-stop ]
+    branches: [ main, master, fix/background-stop, fix/scroll-version ]
   workflow_dispatch:
 
 permissions:
   contents: write
 
+# 正式发布串行，不取消正在发布的任务；版本只能在完整发布后推进。
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_HOST: github.com
+      GH_REPO: ${{ github.repository }}
+      GH_PROMPT_DISABLED: '1'
+      PUBLISH: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate version rules
+        id: version
+        run: |
+          python -I -m unittest discover -s scripts/tests -v
+          python -I scripts/release_version.py inspect --output "$GITHUB_OUTPUT"
+          if [ "$PUBLISH" = "true" ]; then
+            git fetch origin main
+            python -I scripts/release_version.py validate-current
+            python -I scripts/release_version.py check-tags
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -23,18 +47,13 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # ubuntu-latest 已预装 Android SDK（ANDROID_HOME 已配置），
-      # 缺少的 platform/build-tools 由 AGP 自动下载，无需额外 setup 步骤
-
       - name: Download sherpa-onnx AAR (v2.0.1)
         run: |
           mkdir -p app/libs
           curl -fL --retry 3 -o app/libs/sherpa-onnx-2.0.1.aar \
             https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-2.0.1.aar
-          ls -la app/libs/
 
-      # 小模型(vad+streaming)内置进 APK，开箱即用免下载；大模型(sensevoice等)按需下载。
-      - name: Bundle small models (vad + streaming) into APK
+      - name: Bundle small models (vad + streaming)
         run: |
           set -e
           mkdir -p app/src/main/assets/bundled
@@ -42,22 +61,27 @@ jobs:
             https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
           curl -fL --retry 3 -o app/src/main/assets/bundled/streaming.tar.bz2 \
             https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01.tar.bz2
-          ls -la app/src/main/assets/bundled/
 
       - name: Test and lint
+        env:
+          VERSION_CODE: ${{ steps.version.outputs.versionCode }}
+          VERSION_NAME: ${{ steps.version.outputs.versionName }}
         run: |
           chmod +x gradlew
           ./gradlew testReleaseUnitTest lintRelease --no-daemon --stacktrace \
-            -PappVersionCode=${{ github.run_number }} 2>&1 | tee build-log.txt
+            "-PappVersionCode=$VERSION_CODE" "-PappVersionName=$VERSION_NAME" 2>&1 | tee build-log.txt
           exit ${PIPESTATUS[0]}
 
       - name: Build APK after verification
+        env:
+          VERSION_CODE: ${{ steps.version.outputs.versionCode }}
+          VERSION_NAME: ${{ steps.version.outputs.versionName }}
         run: |
           ./gradlew assembleRelease --no-daemon --stacktrace \
-            -PappVersionCode=${{ github.run_number }} 2>&1 | tee -a build-log.txt
+            "-PappVersionCode=$VERSION_CODE" "-PappVersionName=$VERSION_NAME" 2>&1 | tee -a build-log.txt
           exit ${PIPESTATUS[0]}
 
-      - name: Upload test and lint reports
+      - name: Upload verification reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -68,8 +92,7 @@ jobs:
             app/build/reports/lint-results-release.*
           if-no-files-found: ignore
 
-      # 构建失败时上传完整日志，便于远程排错
-      - name: Upload build log (on failure)
+      - name: Upload build log on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -77,48 +100,74 @@ jobs:
           path: build-log.txt
           if-no-files-found: ignore
 
-      # 构建失败时把日志推到 logs 分支（公开分支可免登录读取，用于自动排错）
-      - name: Push build log to logs branch (on failure)
+      - name: Push build log to logs branch on failure
         if: failure()
         run: |
-          git config user.name "build-log-bot"
-          git config user.email "bot@users.noreply.github.com"
-          git checkout -B logs
-          git add build-log.txt
-          git commit -m "ci: build log from run #${{ github.run_number }}" || true
-          git push -f origin logs
+          if [ -f build-log.txt ]; then
+            git config user.name "build-log-bot"
+            git config user.email "bot@users.noreply.github.com"
+            git checkout -B logs
+            git add build-log.txt
+            git commit -m "ci: verification log" || true
+            git push -f origin logs
+          fi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HearingAssist-APK
-          path: app/build/outputs/apk/release/*.apk
+          name: ${{ steps.version.outputs.versionName }}
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
-      # 每次推送自动发布一个 Release，方便手机/浏览器直接下载
-      - name: Publish to GitHub Releases
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+      - name: Recheck publication version and tag absence
+        if: env.PUBLISH == 'true'
+        run: |
+          git fetch origin main
+          python -I scripts/release_version.py validate-current
+          python -I scripts/release_version.py check-tags
+
+      - name: Publish named release
+        if: env.PUBLISH == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: '自动构建 #${{ github.run_number }}'
-          files: app/build/outputs/apk/release/*.apk
+          tag_name: ${{ steps.version.outputs.versionName }}
+          name: ${{ steps.version.outputs.versionName }}
+          target_commitish: ${{ github.sha }}
+          files: app/build/outputs/apk/release/app-release.apk
+          fail_on_unmatched_files: true
+          make_latest: 'true'
           body: |
-            测试与构建通过后的 APK。使用现有固定签名，可覆盖安装相同签名的版本。
-            本构建未代替荣耀 X50 真机验收；请确认切后台停止、回前台手动开始。
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            测试与 lint 通过后的 APK，使用现有签名；尚未替代荣耀 X50 真机验收。
+            对应源码：https://github.com/${{ github.repository }}/tree/${{ github.sha }}
+            许可：https://github.com/${{ github.repository }}/blob/${{ github.sha }}/LICENSE
+            第三方许可：https://github.com/${{ github.repository }}/blob/${{ github.sha }}/THIRD_PARTY_NOTICES.md
 
-      # 把最新版本号写入 main 分支 version.json，供 App 经 raw.githubusercontent.com 检测更新
-      # （raw 源在国内通常比 api.github.com 更可达，作为更新检测的主源）
-      - name: Publish version.json to main
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+      # 仅第一次迁移保留旧更新器写死的下载地址，与主发布挂载同一 APK。
+      - name: Publish one-time legacy compatibility release
+        if: env.PUBLISH == 'true' && steps.version.outputs.legacyBridge == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ steps.version.outputs.versionCode }}
+          name: ${{ steps.version.outputs.versionName }}
+          target_commitish: ${{ github.sha }}
+          files: app/build/outputs/apk/release/app-release.apk
+          fail_on_unmatched_files: true
+          prerelease: true
+          make_latest: 'false'
+          body: |
+            仅供旧更新器的兼容下载入口。此 APK 与同版本命名发布完全相同。
+            对应源码：https://github.com/${{ github.repository }}/tree/${{ github.sha }}
+
+      - name: Verify published APKs and update manifests
+        if: env.PUBLISH == 'true'
         run: |
+          python -I scripts/release_version.py verify-assets --apk app/build/outputs/apk/release/app-release.apk
+          git fetch origin main
+          python -I scripts/release_version.py validate-current
+          git checkout -B main origin/main
+          python -I scripts/release_version.py advance
           git config user.name "build-bot"
           git config user.email "bot@users.noreply.github.com"
-          git fetch origin main
-          git checkout -B main origin/main
-          echo "{\"version\": ${{ github.run_number }}}" > version.json
-          git add version.json
-          git commit -m "chore: bump version.json to ${{ github.run_number }} [skip ci]" || true
+          git add release.properties updates/latest.json version.json
+          git commit -m "chore: advance published version [skip ci]"
           git push origin main

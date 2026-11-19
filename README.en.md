@@ -32,6 +32,7 @@ An Android live-captioning app for deaf and hard-of-hearing people. It turns mic
 | Accurate mode — optional | Uses a separately downloaded SenseVoice model for segment-based recognition. Accuracy, punctuation, and processing time depend on the audio and device. |
 | Simplified Chinese | Recognition output is converted to Simplified Chinese through OpenCC. |
 | Live-preview controls | Enabled by default, with a **200 ms** refresh interval. Options: 100 / 200 / 300 / 500 / 1000 ms. Disable preview to show only final captions. |
+| Follow latest captions | Follows the newest text after layout, including live previews longer than the screen. Scrolling back pauses following; tap “回到最新” (Latest) to resume. |
 | Speaker recognition — off by default | Enroll a speaker by reading three prompted sentences and choosing a caption color. Successful matches display the name and corresponding color. |
 | Sound alerts — off by default | An optional audio-classification model attempts to recognize sounds such as doorbells and alarms during non-speech intervals, with text and vibration alerts. |
 | Keep screen on | Keeps the display awake while listening in the foreground; normal sleep behavior resumes when stopped. Manual screen locking is not prevented. |
@@ -60,7 +61,7 @@ An Android live-captioning app for deaf and hard-of-hearing people. It turns mic
 - **Model downloads:** required models may download automatically on unmetered Wi-Fi or Ethernet. Mobile data or metered connections require two confirmations: first recommending Wi-Fi, then warning about potential data charges.
 - **APK downloads:** Wi-Fi only. A network change or moving the app to the background stops the download. The user can retry after returning.
 - **Version checks:** fetch version metadata, not the APK, and are not restricted to Wi-Fi.
-- Downloads try third-party GitHub mirrors first, then official URLs. These are not a domestic CDN operated by this project, and availability is not guaranteed.
+- **Default update channels:** version checks and APK downloads consistently try `ghproxy.net`, then `gh-proxy.com`, and use official GitHub connections only as a fallback. They do not require the development computer's proxy on port 7897. These are third-party mirrors, not a domestic CDN operated by this project, and reachability on the phone is not guaranteed. Model downloads also remain mirror-first.
 - Updates use **a new APK installed over the existing app**, not silent installation or dynamically downloaded code patches. The system installer may require permission to install unknown apps.
 
 In-place installation can preserve data when the package name, signature, and version requirements match. Early builds used different signatures and may not support in-place upgrades. Uninstalling removes app data.
@@ -101,11 +102,19 @@ The current workflow uses GitHub Actions; a local Android build environment is n
 1. Check out the code and prepare the JDK, AAR, and bundled lightweight models.
 2. Run `testReleaseUnitTest` and `lintRelease`.
 3. Run `assembleRelease` only after verification passes, then upload the APK and verification reports.
-4. Successful push builds on `main` / `master` publish a Release and update `version.json`.
+4. Successful push verification on `main` / `master` publishes a named version and updates `updates/latest.json`.
 
-The current configuration also validates pushes to `fix/background-stop` and uploads artifacts without publishing a release. Manual `workflow_dispatch` runs can build a selected branch but do not publish a release either. Refer to the [actual workflow](.github/workflows/build-apk.yml).
+### Version names and legacy upgrades
 
-There are currently **17 JUnit tests** covering session permissions, cancellation and resource-release ordering, and isolation of APK download temporary files. They use simulated tasks, not real microphone input or JNI performance measurements.
+- [release.properties](release.properties) is the single pending-release configuration. The first new-format name is **`bate1.0.1`**, preserving the project's `bate` spelling. Prompts, Release titles, and primary tags use this name; Settings displays the installed version.
+- Android `versionCode` remains an independently increasing integer for update comparisons and APK validation. It is not inferred from the version-name string. After a complete successful publication, the patch name and integer code advance; pre-publication failures do not advance them.
+- The first migration release also preserves one `build-N` compatibility download entry containing the exact same signed APK. The old `version.json` freezes at that bridge version. New clients read `updates/latest.json`; subsequent primary releases use names such as `bate1.0.2` only.
+- Before upgrading, old clients may still display build numbers. Their GitHub `/latest` fallback cannot parse named tags; upgrading relies on the retained old manifest or manual installation of the bridge release.
+- If publication succeeds only partially, do not overwrite an existing tag or fake a version. Inspect and recover the publication records manually; advance configuration only after complete success.
+
+The current configuration also validates pushes to `fix/background-stop` and `fix/scroll-version` and uploads artifacts without publishing a release. Manual `workflow_dispatch` runs can build a selected branch but do not publish a release either. Refer to the [actual workflow](.github/workflows/build-apk.yml).
+
+There are currently **33 JUnit tests** covering session permissions, cancellation and resource-release ordering, temporary-file isolation, release metadata, and caption-following policy. They use simulated tasks, not real microphone input or JNI performance measurements. Python tests for release configuration also run in CI.
 
 ### Project layout
 
@@ -123,7 +132,7 @@ app/src/test/                    # JUnit regression tests
 
 ## Reporting issues
 
-Include the phone model, Android / MagicOS version, app build number, recognition mode, and reproduction steps. For recognition problems, provide an example of what was spoken and what appeared on screen. Do not publicly upload recordings or voiceprint data without the participants' consent.
+Include the phone model, Android / MagicOS version, app version shown in Settings, recognition mode, and reproduction steps. For recognition problems, provide an example of what was spoken and what appeared on screen. Do not publicly upload recordings or voiceprint data without the participants' consent.
 
 ## License and commercial licensing
 

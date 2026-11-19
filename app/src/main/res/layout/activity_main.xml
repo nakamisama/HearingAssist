@@ -54,6 +54,18 @@
             android:textSize="30sp" />
     </ScrollView>
 
+    <!-- 回看旧字幕时可恢复自动跟随，平时不占用字幕空间 -->
+    <Button
+        android:id="@+id/btnLatest"
+        android:layout_width="wrap_content"
+        android:layout_height="48dp"
+        android:layout_gravity="end"
+        android:layout_marginEnd="20dp"
+        android:text="@string/caption_jump_latest"
+        android:textColor="@color/text_primary"
+        android:backgroundTint="@color/surface"
+        android:visibility="gone" />
+
     <!-- 环境音提示条（默认隐藏） -->
     <TextView
         android:id="@+id/tvEnvAlert"

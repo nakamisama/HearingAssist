@@ -3,6 +3,17 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val releaseProperties = java.util.Properties().apply {
+    rootProject.file("release.properties").inputStream().use { load(it) }
+}
+val releaseName = (project.findProperty("appVersionName") as String?) ?: releaseProperties.getProperty("versionName")
+val releaseCode = ((project.findProperty("appVersionCode") as String?) ?: releaseProperties.getProperty("versionCode"))
+    .toIntOrNull() ?: error("Invalid release version code")
+require(releaseCode in 1..2_100_000_000) { "Release version code is outside Android's range" }
+require(releaseName != null && Regex("bate[0-9]{1,6}\\.[0-9]{1,6}\\.[0-9]{1,6}").matches(releaseName)) {
+    "Release version name must use bateX.Y.Z"
+}
+
 android {
     namespace = "com.hearassist"
     compileSdk = 34
@@ -11,9 +22,9 @@ android {
         applicationId = "com.hearassist"
         minSdk = 26
         targetSdk = 34
-        // 版本号由 CI 传入（GitHub run number），每次构建自动递增，保证可覆盖更新
-        versionCode = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 1
-        versionName = "1.1.0"
+        // 对外名称和 Android 整数序号分别由唯一版本配置提供；CI 重试不推进版本。
+        versionCode = releaseCode
+        versionName = releaseName
         // 荣耀 X50 是 arm64；保留 32 位 armeabi-v7a 以兼容更老的机型
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -85,6 +96,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+    testImplementation("org.json:json:20240303")
 
     // 繁体 → 简体中文转换（纯 Java 实现，无额外体积负担）
     implementation("com.github.houbb:opencc4j:1.8.0")

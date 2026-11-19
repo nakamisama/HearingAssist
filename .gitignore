@@ -17,6 +17,10 @@ app/src/main/assets/models/**/*.onnx
 app/src/main/assets/models/**/*.txt
 app/src/main/assets/models/**/*.csv
 
+# 本机脚本缓存
+__pycache__/
+*.pyc
+
 # OS
 .DS_Store
 Thumbs.db

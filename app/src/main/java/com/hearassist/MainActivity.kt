@@ -15,7 +15,9 @@ import android.os.Environment
 import android.os.SystemClock
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
@@ -31,6 +33,8 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.view.OneShotPreDrawListener
+import androidx.core.view.doOnPreDraw
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -41,9 +45,12 @@ import com.hearassist.data.CellularConsent
 import com.hearassist.data.CancellableHttp
 import com.hearassist.data.EngineStatus
 import com.hearassist.data.PendingApk
+import com.hearassist.data.ReleaseInfo
 import com.hearassist.data.SessionPolicy
 import com.hearassist.data.Settings
+import com.hearassist.data.UpdateChannels
 import com.hearassist.data.VoiceprintStore
+import com.hearassist.ui.CaptionScrollPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -66,6 +73,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var scrollSubtitles: ScrollView
     private lateinit var btnSettings: ImageButton
     private lateinit var btnMain: Button
+    private lateinit var btnLatest: Button
+    private val scrollPolicy = CaptionScrollPolicy()
+    private var scrollPending = false
+    private var scrollListener: OneShotPreDrawListener? = null
+    private var userScrollActive = false
+    private var touchingCaptions = false
+    private var autoScrolling = false
+    private var touchStartY = 0f
+    private var renderAfterTouch = false
+    private var renderedLines = emptyList<CaptionBus.SubtitleLine>()
+    private var renderedStarts = IntArray(0)
+    private var pendingAnchor: CaptionAnchor? = null
+    private data class CaptionAnchor(val line: CaptionBus.SubtitleLine, val offset: Int, val pixels: Int)
     private var permissionTicket: SessionPolicy.VisibilityTicket? = null
     private var envAlertJob: Job? = null
     private var previewRenderJob: Job? = null
@@ -110,6 +130,8 @@ class MainActivity : AppCompatActivity() {
         scrollSubtitles = findViewById(R.id.scrollSubtitles)
         btnSettings = findViewById(R.id.btnSettings)
         btnMain = findViewById(R.id.btnMain)
+        btnLatest = findViewById(R.id.btnLatest)
+        configureCaptionScrolling()
         automaticCheckDone = savedInstanceState?.getBoolean("update_checked") ?: false
         pendingInstall = savedInstanceState?.getString("pending_install")?.let(::File)
         btnMain.setOnClickListener {
@@ -141,6 +163,15 @@ class MainActivity : AppCompatActivity() {
         super.onSaveInstanceState(outState)
     }
 
+    override fun onStop() {
+        scrollListener?.removeListener()
+        scrollListener = null
+        scrollPending = false
+        touchingCaptions = false
+        userScrollActive = false
+        super.onStop()
+    }
+
     override fun onDestroy() {
         AppSessionController.removeBackgroundListener(onBackground)
         onBackground()
@@ -160,11 +191,11 @@ class MainActivity : AppCompatActivity() {
             if (!visible(ticket)) return@launch
             if (latest == null) {
                 if (manual) Toast.makeText(this@MainActivity, R.string.update_check_fail, Toast.LENGTH_LONG).show()
-            } else if (latest > BuildConfig.VERSION_CODE) {
+            } else if (latest.isNewerThan(BuildConfig.VERSION_CODE)) {
                 updateDialog?.dismiss()
                 updateDialog = AlertDialog.Builder(this@MainActivity)
                     .setTitle(R.string.update_title)
-                    .setMessage(getString(R.string.update_message, latest))
+                    .setMessage(getString(R.string.update_message, latest.versionName))
                     .setPositiveButton(R.string.update_now) { _, _ ->
                         if (visible(ticket)) confirmDownload(latest)
                     }
@@ -187,7 +218,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun confirmDownload(latest: Int) {
+    private fun confirmDownload(latest: ReleaseInfo) {
         if (wifiNetwork() == null) {
             Toast.makeText(this, R.string.update_wifi_only, Toast.LENGTH_LONG).show()
             return
@@ -195,7 +226,7 @@ class MainActivity : AppCompatActivity() {
         val ticket = AppSessionController.visibilityTicket()
         updateDialog = AlertDialog.Builder(this)
             .setTitle(R.string.update_confirm_title)
-            .setMessage(getString(R.string.update_confirm_message, latest))
+            .setMessage(getString(R.string.update_confirm_message, latest.versionName))
             .setPositiveButton(R.string.update_confirm_yes) { _, _ ->
                 if (visible(ticket)) downloadAndInstall(latest)
             }
@@ -204,7 +235,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     @Suppress("DEPRECATION")
-    private fun downloadAndInstall(latest: Int) {
+    private fun downloadAndInstall(latest: ReleaseInfo) {
         if (downloadJob?.isActive == true) return
         val network = wifiNetwork() ?: run {
             Toast.makeText(this, R.string.update_wifi_only, Toast.LENGTH_LONG).show()
@@ -259,21 +290,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private suspend fun downloadApk(
-        latest: Int,
+        latest: ReleaseInfo,
         network: Network,
         ticket: SessionPolicy.VisibilityTicket,
         onProgress: (Int) -> Unit,
     ): File? = withContext(Dispatchers.IO) {
         val root = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return@withContext null
-        val output = File(root, "update-$latest.apk")
+        val output = File(root, "update-${latest.versionCode}.apk")
         if (output.exists() && validUpdate(output, latest)) return@withContext output
-        val original = "https://github.com/nakamisama/HearingAssist/releases/download/build-$latest/app-release.apk"
-        for (url in listOf("https://ghproxy.net/$original", "https://gh-proxy.com/$original", original)) {
+        for (url in UpdateChannels.apkUrls(latest)) {
             currentCoroutineContext().ensureActive()
             if (!AppSessionController.isVisible(ticket) || wifiNetwork() != network) return@withContext null
             var pending: PendingApk? = null
             try {
-                val download = PendingApk(root, latest).also { pending = it }
+                val download = PendingApk(root, latest.versionCode).also { pending = it }
                 val temporary = download.file
                 withRedirects(url, network) { connection ->
                     val length = connection.contentLengthLong
@@ -303,12 +333,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     @Suppress("DEPRECATION")
-    private fun validUpdate(file: File, expectedVersion: Int): Boolean {
+    private fun validUpdate(file: File, release: ReleaseInfo): Boolean {
         val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
         val update = packageManager.getPackageArchiveInfo(file.absolutePath, flags) ?: return false
         if (update.packageName != packageName) return false
         val version = if (Build.VERSION.SDK_INT >= 28) update.longVersionCode else update.versionCode.toLong()
-        if (version != expectedVersion.toLong() || version <= BuildConfig.VERSION_CODE) return false
+        if (version != release.versionCode.toLong() || version <= BuildConfig.VERSION_CODE) return false
+        if (!release.legacy && update.versionName != release.versionName) return false
         val current = packageManager.getPackageInfo(packageName, flags)
         return certificateBytes(update).toSet() == certificateBytes(current).toSet() && certificateBytes(update).isNotEmpty()
     }
@@ -349,32 +380,33 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private suspend fun fetchLatestVersion(): Int? = withContext(Dispatchers.IO) {
-        val raw = "https://raw.githubusercontent.com/nakamisama/HearingAssist/main/version.json"
-        val sources = listOf("https://ghproxy.net/$raw", "https://gh-proxy.com/$raw", raw)
-        for (source in sources) {
+    private suspend fun fetchLatestVersion(): ReleaseInfo? = withContext(Dispatchers.IO) {
+        for (source in UpdateChannels.manifestUrls()) {
             try {
-                val version = withRedirects(source) { connection ->
-                    val output = java.io.ByteArrayOutputStream()
-                    if (connection.contentLengthLong > 65536) throw IOException("版本清单过大")
-                    CancellableHttp.copy(connection.inputStream, output, connection.contentLengthLong, {
-                        if (output.size() > 65536) throw IOException("版本清单过大")
-                    })
-                    JSONObject(output.toString("UTF-8")).optInt("version", 0)
-                }
-                if (version > 0) return@withContext version
+                return@withContext ReleaseInfo.parse(readReleaseText(source))
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
                 currentCoroutineContext().ensureActive()
             }
         }
+        // 旧 API 只对含 Android 整数编号的 tag 有依据，不能从 bate 名称猜整数版本。
         try {
             val text = CancellableHttp.readText("https://api.github.com/repos/nakamisama/HearingAssist/releases/latest")
-            JSONObject(text).optString("tag_name", "").removePrefix("build-").toIntOrNull()
+            ReleaseInfo.fromLegacyTag(JSONObject(text).getString("tag_name"))
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) { null }
+    }
+
+    private suspend fun readReleaseText(source: String): String = withRedirects(source) { connection ->
+        val output = java.io.ByteArrayOutputStream()
+        if (connection.contentLengthLong > 65536) throw IOException("版本清单过大")
+        CancellableHttp.copy(connection.inputStream, output, connection.contentLengthLong, {
+            if (output.size() > 65536) throw IOException("版本清单过大")
+        })
+        if (output.size() > 65536) throw IOException("版本清单过大")
+        output.toString("UTF-8")
     }
 
     private fun showSettingsDialog() {
@@ -390,6 +422,7 @@ class MainActivity : AppCompatActivity() {
         val swPreview = view.findViewById<Switch>(R.id.swPreview)
         val spnInterval = view.findViewById<Spinner>(R.id.spnInterval)
         val btnCheckUpdate = view.findViewById<Button>(R.id.btnCheckUpdate)
+        view.findViewById<TextView>(R.id.tvVersion).text = getString(R.string.current_version, BuildConfig.VERSION_NAME)
         swVoiceprint.isChecked = Settings.isVoiceprintEnabled(this)
         swVoiceprint.isEnabled = VoiceprintStore.load(this).isNotEmpty()
         swVoiceprint.setOnCheckedChangeListener { _, checked ->
@@ -546,20 +579,128 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    @Suppress("ClickableViewAccessibility")
+    private fun configureCaptionScrolling() {
+        val slop = ViewConfiguration.get(this).scaledTouchSlop
+        scrollSubtitles.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    touchStartY = event.y
+                    touchingCaptions = true
+                    userScrollActive = false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (kotlin.math.abs(event.y - touchStartY) > slop) userScrollActive = true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    touchingCaptions = false
+                    if (renderAfterTouch) {
+                        renderAfterTouch = false
+                        renderSubtitles()
+                    } else requestCaptionScroll()
+                }
+            }
+            // ScrollView 本身处理点击/拖动；这里只记录用户回看，不吞掉事件。
+            false
+        }
+        scrollSubtitles.setOnScrollChangeListener { _, _, y, _, _ ->
+            if (userScrollActive && !autoScrolling && (touchingCaptions || !scrollPending)) {
+                val child = scrollSubtitles.getChildAt(0)
+                val maximum = (child.height - scrollSubtitles.height +
+                    scrollSubtitles.paddingTop + scrollSubtitles.paddingBottom).coerceAtLeast(0)
+                scrollPolicy.onUserScroll(y, maximum, (24 * resources.displayMetrics.density).toInt())
+                if (scrollPolicy.followLatest && !touchingCaptions) userScrollActive = false
+                btnLatest.visibility = if (scrollPolicy.followLatest) View.GONE else View.VISIBLE
+            }
+        }
+        btnLatest.setOnClickListener {
+            userScrollActive = false
+            pendingAnchor = null
+            scrollPolicy.resume()
+            btnLatest.visibility = View.GONE
+            requestCaptionScroll()
+        }
+        scrollSubtitles.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> requestCaptionScroll() }
+    }
+
+    /** 布局后跟随，或恢复回看锚点；不以旧 TextView 高度计算滚动距离。 */
+    private fun requestCaptionScroll() {
+        if (scrollPending || touchingCaptions || isDestroyed) return
+        if (!scrollPolicy.followLatest && pendingAnchor == null) return
+        scrollPending = true
+        scrollListener = scrollSubtitles.doOnPreDraw {
+            scrollPending = false
+            scrollListener = null
+            if (!touchingCaptions && !isDestroyed && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                val child = scrollSubtitles.getChildAt(0)
+                val bottom = (child.height - scrollSubtitles.height +
+                    scrollSubtitles.paddingTop + scrollSubtitles.paddingBottom).coerceAtLeast(0)
+                val anchor = pendingAnchor
+                pendingAnchor = null
+                autoScrolling = true
+                try {
+                    if (scrollPolicy.followLatest && !touchingCaptions) {
+                        scrollSubtitles.scrollTo(0, bottom)
+                        // 在最终位置取消旧 fling，避免点击“回到最新”后又被惯性带走。
+                        scrollSubtitles.fling(0)
+                    } else if (!scrollPolicy.followLatest && anchor != null) {
+                        val layout = tvSubtitles.layout
+                        if (layout != null) {
+                            val index = renderedLines.indexOfFirst { it === anchor.line }
+                            val offset = if (index >= 0) {
+                                (renderedStarts[index] + anchor.offset).coerceIn(0, tvSubtitles.length())
+                            } else 0 // 回看的行已从200条历史中淘汰，停在最早仍保留的行。
+                            val row = layout.getLineForOffset(offset)
+                            val y = tvSubtitles.top + tvSubtitles.totalPaddingTop + layout.getLineTop(row) + anchor.pixels
+                            scrollSubtitles.scrollTo(0, y.coerceIn(0, bottom))
+                            scrollSubtitles.fling(0)
+                        }
+                    }
+                } finally { autoScrolling = false }
+            }
+        }
+        scrollSubtitles.invalidate()
+    }
+
+    private fun captionAnchor(): CaptionAnchor? {
+        if (scrollPolicy.followLatest || renderedLines.isEmpty()) return null
+        val layout = tvSubtitles.layout ?: return null
+        val y = (scrollSubtitles.scrollY - tvSubtitles.top - tvSubtitles.totalPaddingTop).coerceAtLeast(0)
+        val row = layout.getLineForVertical(y)
+        val offset = layout.getLineStart(row)
+        val index = renderedStarts.indexOfLast { it <= offset }.coerceAtLeast(0)
+        if (index !in renderedLines.indices) return null
+        return CaptionAnchor(renderedLines[index], offset - renderedStarts[index], y - layout.getLineTop(row))
+    }
+
     private fun renderSubtitles(scrollToBottom: Boolean = false) {
+        if (scrollToBottom) previewRenderJob?.cancel()
+        // 拖动回看时不重排文字；松手再渲染最新状态并恢复同一阅读锚点。
+        if (touchingCaptions) {
+            renderAfterTouch = true
+            return
+        }
+        renderAfterTouch = false
+        val anchor = pendingAnchor ?: captionAnchor()
         if (CaptionBus.status.value == EngineStatus.STARTING) {
+            pendingAnchor = null
+            renderedLines = emptyList()
+            renderedStarts = IntArray(0)
             tvSubtitles.text = CaptionBus.startMsg.value.ifEmpty { getString(R.string.starting_hint) }
+            requestCaptionScroll()
             return
         }
         val lines = CaptionBus.subtitles.value
         val partial = if (Settings.isPreviewEnabled(this) && Settings.getAsrMode(this) == Settings.ASR_REALTIME)
             CaptionBus.partial.value else ""
+        val starts = IntArray(lines.size)
         if (lines.isEmpty() && partial.isEmpty()) tvSubtitles.setText(R.string.initial_hint)
         else {
             val text = SpannableStringBuilder()
             lines.forEachIndexed { index, line ->
                 if (index > 0) text.append("\n")
                 val start = text.length
+                starts[index] = start
                 if (line.speaker != null) text.append("${line.speaker}：")
                 text.append(line.text)
                 text.setSpan(ForegroundColorSpan(if (line.color != 0) line.color else getColor(R.color.text_primary)),
@@ -574,6 +715,9 @@ class MainActivity : AppCompatActivity() {
             }
             tvSubtitles.text = text
         }
-        if (scrollToBottom) scrollSubtitles.post { scrollSubtitles.fullScroll(ScrollView.FOCUS_DOWN) }
+        renderedLines = lines
+        renderedStarts = starts
+        pendingAnchor = if (scrollPolicy.followLatest) null else anchor
+        requestCaptionScroll()
     }
 }
