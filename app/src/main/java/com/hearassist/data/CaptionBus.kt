@@ -2,81 +2,51 @@ package com.hearassist.data
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.update
 
-/**
- * 服务（后台识别）与界面（字幕显示）之间的共享状态。
- * 单例 + StateFlow，避免引入额外的架构依赖。
- */
+/** 服务与界面共享状态；字幕内容和预览使用同一个原子快照。 */
 enum class EngineStatus { IDLE, STARTING, LISTENING, RECOGNIZING }
 
 object CaptionBus {
-
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running
-
     private val _status = MutableStateFlow(EngineStatus.IDLE)
     val status: StateFlow<EngineStatus> = _status
+    private val timeline = CaptionTimeline()
+    val captions: StateFlow<CaptionSnapshot> = timeline.state
 
-    /** 一条字幕：说话人（可空）、说话人颜色（0=默认）、文本 */
-    data class SubtitleLine(val speaker: String?, val color: Int, val text: String)
+    fun beginCaptions(ticket: SessionPolicy.CaptionTicket) {
+        timeline.beginSession(CaptionSession(ticket.epoch, ticket.generation))
+    }
+    fun preview(id: CaptionId, text: String) = timeline.preview(id, text)
+    fun pending(id: CaptionId, fallback: String) = timeline.pending(id, fallback)
+    fun complete(id: CaptionId, text: String, speaker: String? = null, color: Int = 0) =
+        timeline.complete(id, text, speaker, color)
 
-    private val _subtitles = MutableStateFlow(listOf<SubtitleLine>())
-    val subtitles: StateFlow<List<SubtitleLine>> = _subtitles
-
-    /** 实时模式下当前未说完的半句（逐字刷新），空串表示无 */
-    private val _partial = MutableStateFlow("")
-    val partial: StateFlow<String> = _partial
-    fun setPartial(t: String) { _partial.value = t }
-
-    /** 启动/模型下载进度文本（STARTING 状态时显示） */
     private val _startMsg = MutableStateFlow("")
     val startMsg: StateFlow<String> = _startMsg
-    fun setStartMsg(t: String) { _startMsg.value = t }
-
+    fun setStartMsg(message: String) { _startMsg.value = message }
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error
     fun setError(message: String?) { _error.value = message }
+    private val _envEvent = MutableStateFlow<String?>(null)
+    val envEvent: StateFlow<String?> = _envEvent
+    private val _envEnabled = MutableStateFlow(false)
+    val envEnabled: StateFlow<Boolean> = _envEnabled
+    private val _langMode = MutableStateFlow(0)
+    val langMode: StateFlow<Int> = _langMode
 
     fun stopUi() {
         _running.value = false
         _status.value = EngineStatus.IDLE
-        _partial.value = ""
+        timeline.stopSession()
         _startMsg.value = ""
         _envEvent.value = null
     }
 
-    /** 最近检测到的环境音事件（如“门铃”），null 表示无 */
-    private val _envEvent = MutableStateFlow<String?>(null)
-    val envEvent: StateFlow<String?> = _envEvent
-
-    /** 环境音识别开关，默认关闭 */
-    private val _envEnabled = MutableStateFlow(false)
-    val envEnabled: StateFlow<Boolean> = _envEnabled
-
-    /** 识别语言模式：0=自动 1=普通话 2=粤语 */
-    private val _langMode = MutableStateFlow(0)
-    val langMode: StateFlow<Int> = _langMode
-
-    fun setLangMode(v: Int) { _langMode.value = v }
-
-    fun setRunning(v: Boolean) { _running.value = v }
-    fun setStatus(v: EngineStatus) { _status.value = v }
-    fun setEnvEnabled(v: Boolean) { _envEnabled.value = v }
-
-    fun addSubtitle(text: String, speaker: String? = null, color: Int = 0) {
-        if (text.isBlank()) return
-        // 原子更新：多个识别协程并发写入时避免互相覆盖导致丢字幕
-        _subtitles.update { current ->
-            val list = current.toMutableList()
-            list.add(SubtitleLine(speaker, color, text))
-            if (list.size > MAX_LINES) list.removeAt(0)
-            list
-        }
-    }
-
+    fun setLangMode(mode: Int) { _langMode.value = mode }
+    fun setRunning(running: Boolean) { _running.value = running }
+    fun setStatus(status: EngineStatus) { _status.value = status }
+    fun setEnvEnabled(enabled: Boolean) { _envEnabled.value = enabled }
     fun pushEnvEvent(name: String) { _envEvent.value = name }
     fun clearEnvEvent() { _envEvent.value = null }
-
-    private const val MAX_LINES = 200
 }

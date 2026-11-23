@@ -37,13 +37,18 @@ class StreamingProcessor(ctx: Context) : AutoCloseable {
         throw error
     }
 
-    /** 喂一帧音频并解码。若到达端点（句末）返回该句简体文本，否则返回 null。 */
+    var endedUtterance: Boolean = false
+        private set
+
+    /** 喂一帧音频并解码；endedUtterance 区分空定稿与尚未结束。 */
     fun accept(samples: FloatArray): String? {
+        endedUtterance = false
         stream.acceptWaveform(samples, VadProcessor.SAMPLE_RATE)
         while (recognizer.isReady(stream)) {
             recognizer.decode(stream)
         }
         if (recognizer.isEndpoint(stream)) {
+            endedUtterance = true
             val raw = recognizer.getResult(stream).text.trim()
             recognizer.reset(stream)
             return if (raw.isEmpty()) null else ZhConverterUtil.toSimple(raw)

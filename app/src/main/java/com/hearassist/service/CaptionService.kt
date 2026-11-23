@@ -28,6 +28,8 @@ import com.hearassist.audio.VadProcessor
 import com.hearassist.audio.VoiceprintProcessor
 import com.hearassist.data.AppSessionController
 import com.hearassist.data.CaptionBus
+import com.hearassist.data.CaptionId
+import com.hearassist.data.CaptionSession
 import com.hearassist.data.CellularConsent
 import com.hearassist.data.EngineStatus
 import com.hearassist.data.ModelManager
@@ -172,7 +174,7 @@ class CaptionService : Service() {
         audioLoop(ticket, owned)
     }
 
-    private data class Work(val samples: FloatArray, val fallback: String?)
+    private data class Work(val id: CaptionId, val samples: FloatArray, val fallback: String?)
 
     private suspend fun audioLoop(ticket: SessionPolicy.CaptionTicket, owned: EngineResources) = coroutineScope {
         val microphone = MicrophoneCapture(hardwareAgc = true)
@@ -188,6 +190,9 @@ class CaptionService : Service() {
             CaptionBus.setStatus(EngineStatus.LISTENING)
         }
         val vad = requireNotNull(owned.vad)
+        val captionSession = CaptionSession(ticket.epoch, ticket.generation)
+        var segmentNumber = 0L
+        var currentId = CaptionId(captionSession, segmentNumber)
         val queue = Channel<Work>(3)
         val worker = launch(Dispatchers.Default) {
             for (work in queue) {
@@ -197,19 +202,30 @@ class CaptionService : Service() {
                     val text = owned.stt?.recognize(work.samples)?.takeIf { it.isNotBlank() }
                         ?: work.fallback.orEmpty()
                     checkSession(ticket)
+                    var name: String? = null
+                    var color = 0
                     if (text.isNotBlank()) {
-                        val vp = owned.voiceprint
-                        val embedding = vp?.extract(work.samples)
-                        checkSession(ticket)
-                        val name = if (embedding != null) vp?.search(embedding) else null
-                        val color = if (name != null) vp?.colorOf(name) ?: 0 else 0
-                        AppSessionController.publish(ticket) { CaptionBus.addSubtitle(text, name, color) }
+                        try {
+                            val vp = owned.voiceprint
+                            val embedding = vp?.extract(work.samples)
+                            checkSession(ticket)
+                            name = if (embedding != null) vp?.search(embedding) else null
+                            color = if (name != null) vp?.colorOf(name) ?: 0 else 0
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.w(TAG, "声纹匹配失败，保留字幕", e)
+                        }
                     }
+                    AppSessionController.publish(ticket) { CaptionBus.complete(work.id, text, name, color) }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     Log.e(TAG, "语音段处理失败", e)
-                    AppSessionController.publish(ticket) { CaptionBus.setError("这段语音识别失败，请重试") }
+                    AppSessionController.publish(ticket) {
+                        CaptionBus.complete(work.id, work.fallback.orEmpty())
+                        CaptionBus.setError("这段语音识别失败，已保留可用预览")
+                    }
                 } finally {
                     AppSessionController.publish(ticket) { CaptionBus.setStatus(EngineStatus.LISTENING) }
                 }
@@ -222,13 +238,20 @@ class CaptionService : Service() {
         var environmentFrames = 0
 
         fun enqueue(work: Work) {
+            AppSessionController.publish(ticket) { CaptionBus.pending(work.id, work.fallback.orEmpty()) }
             if (queue.trySend(work).isSuccess) return
-            // 录音不能等待慢推理；最多保留三段，避免积压吃光内存。
-            if (queue.tryReceive().getOrNull() != null) {
+            // 录音不能等待慢推理；保留已经显示的预览，而不是因跳过积压清空一行。
+            val skipped = queue.tryReceive().getOrNull()
+            if (skipped != null) {
                 Log.w(TAG, "识别队列积压，跳过最旧的待处理段")
-                AppSessionController.publish(ticket) { CaptionBus.setError("识别处理较慢，已跳过一段积压语音") }
+                AppSessionController.publish(ticket) {
+                    CaptionBus.complete(skipped.id, skipped.fallback.orEmpty())
+                    CaptionBus.setError("识别处理较慢，已保留积压段的可用预览")
+                }
             }
-            queue.trySend(work)
+            if (!queue.trySend(work).isSuccess) {
+                AppSessionController.publish(ticket) { CaptionBus.complete(work.id, work.fallback.orEmpty()) }
+            }
         }
 
         try {
@@ -254,22 +277,29 @@ class CaptionService : Service() {
                     // 小模型的端点比 VAD 慢，不能提前 reset，否则永远丢失正式字幕。
                     if (owned.stt != null) {
                         val fallback = finalText ?: stream?.partial()
-                        enqueue(Work(segment.samples, fallback))
+                        val id = currentId
+                        enqueue(Work(id, segment.samples, fallback))
                         stream?.reset()
+                        currentId = CaptionId(captionSession, ++segmentNumber)
                     }
                 }
                 if (stream != null) {
-                    if (owned.stt == null && !finalText.isNullOrBlank()) {
-                        if (owned.voiceprint != null) {
-                            enqueue(Work(speakerBuffer.snapshot(), finalText))
+                    if (owned.stt == null && stream.endedUtterance) {
+                        val id = currentId
+                        if (owned.voiceprint != null && !finalText.isNullOrBlank()) {
+                            enqueue(Work(id, speakerBuffer.snapshot(), finalText))
                         } else {
-                            AppSessionController.publish(ticket) { CaptionBus.addSubtitle(finalText) }
+                            AppSessionController.publish(ticket) { CaptionBus.complete(id, finalText.orEmpty()) }
                         }
+                        currentId = CaptionId(captionSession, ++segmentNumber)
                         speakerBuffer.clear()
                     }
                     val partial = stream.partial()
-                    // 只有录音循环拥有预览；旧的定稿协程不再清空下一句预览。
-                    AppSessionController.publish(ticket) { CaptionBus.setPartial(partial) }
+                    val previewId = currentId
+                    // 空的reset结果不清屏；上一段保持原位，直到它定稿或下一段有实际文字。
+                    if (partial.isNotBlank()) {
+                        AppSessionController.publish(ticket) { CaptionBus.preview(previewId, partial) }
+                    }
                 }
                 if (owned.environment != null) {
                     if (vad.isSpeechDetected()) {

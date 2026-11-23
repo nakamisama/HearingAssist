@@ -24,6 +24,7 @@
     <string name="grant">去授权</string>
     <string name="initial_hint">对方说的话会实时显示在这里</string>
     <string name="caption_jump_latest">回到最新</string>
+    <string name="latest_caption_title">最新一句</string>
     <string name="env_detecting">正在监听环境音…</string>
 
     <!-- 声纹 -->

@@ -32,7 +32,8 @@ An Android live-captioning app for deaf and hard-of-hearing people. It turns mic
 | Accurate mode — optional | Uses a separately downloaded SenseVoice model for segment-based recognition. Accuracy, punctuation, and processing time depend on the audio and device. |
 | Simplified Chinese | Recognition output is converted to Simplified Chinese through OpenCC. |
 | Live-preview controls | Enabled by default, with a **200 ms** refresh interval. Options: 100 / 200 / 300 / 500 / 1000 ms. Disable preview to show only final captions. |
-| Follow latest captions | Follows the newest text after layout, including live previews longer than the screen. Scrolling back pauses following; tap “回到最新” (Latest) to resume. |
+| Latest-sentence reading area | Preview and the matching final caption update in place inside a fixed area without clearing while waiting. The body stays yellow; the speaker name retains its chosen color. Previous sentences enter history when the next appears. |
+| Follow latest captions | History follows the bottom only when its content changes. Scrolling back pauses following; tap “回到最新” (Latest) to resume. Finalization does not move the current reading area; long current sentences can be scrolled manually. |
 | Speaker recognition — off by default | Enroll a speaker by reading three prompted sentences and choosing a caption color. Successful matches display the name and corresponding color. |
 | Sound alerts — off by default | An optional audio-classification model attempts to recognize sounds such as doorbells and alarms during non-speech intervals, with text and vibration alerts. |
 | Keep screen on | Keeps the display awake while listening in the foreground; normal sleep behavior resumes when stopped. Manual screen locking is not prevented. |
@@ -112,9 +113,9 @@ The current workflow uses GitHub Actions; a local Android build environment is n
 - Before upgrading, old clients may still display build numbers. Their GitHub `/latest` fallback cannot parse named tags; upgrading relies on the retained old manifest or manual installation of the bridge release.
 - If publication succeeds only partially, do not overwrite an existing tag or fake a version. Inspect and recover the publication records manually; advance configuration only after complete success.
 
-The current configuration also validates pushes to `fix/background-stop`, `fix/scroll-version`, and `fix/update-download` and uploads artifacts without publishing a release. Manual `workflow_dispatch` runs can build a selected branch but do not publish a release either. Refer to the [actual workflow](.github/workflows/build-apk.yml).
+The current configuration also validates pushes to `fix/background-stop`, `fix/scroll-version`, `fix/update-download`, and `fix/caption-stability` and uploads artifacts without publishing a release. Manual `workflow_dispatch` runs can build a selected branch but do not publish a release either. Refer to the [actual workflow](.github/workflows/build-apk.yml).
 
-There are currently **38 JUnit tests** covering session permissions, cancellation and resource-release ordering, temporary-file isolation, release metadata, and caption-following policy. They use simulated tasks, not real microphone input or JNI performance measurements. Python tests for release configuration also run in CI.
+There are currently **54 JUnit tests** covering session permissions, cancellation and resource-release ordering, temporary-file isolation, release metadata, caption-following policy, preview/final timing, and colors. They use simulated tasks, not real microphone input or JNI performance measurements. Python tests for release configuration also run in CI.
 
 ### Project layout
 

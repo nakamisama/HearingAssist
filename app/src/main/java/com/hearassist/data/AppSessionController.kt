@@ -119,7 +119,7 @@ object AppSessionController {
         if (!policy.allowsCaption(ticket)) return
         CaptionBus.setError(null)
         CaptionBus.setStartMsg("")
-        CaptionBus.setPartial("")
+        CaptionBus.beginCaptions(ticket)
         CaptionBus.setRunning(true)
         CaptionBus.setStatus(EngineStatus.STARTING)
         try {

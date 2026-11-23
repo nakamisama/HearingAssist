@@ -43,6 +43,10 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.hearassist.data.AppSessionController
 import com.hearassist.data.CaptionBus
+import com.hearassist.data.CaptionId
+import com.hearassist.data.CaptionLine
+import com.hearassist.data.CaptionPhase
+import com.hearassist.data.CaptionSnapshot
 import com.hearassist.data.CellularConsent
 import com.hearassist.data.CancellableHttp
 import com.hearassist.data.DownloadProgressMeter
@@ -53,6 +57,7 @@ import com.hearassist.data.SessionPolicy
 import com.hearassist.data.Settings
 import com.hearassist.data.UpdateChannels
 import com.hearassist.data.VoiceprintStore
+import com.hearassist.ui.CaptionColorPolicy
 import com.hearassist.ui.CaptionScrollPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -74,6 +79,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvSubtitles: TextView
     private lateinit var tvEnvAlert: TextView
     private lateinit var scrollSubtitles: ScrollView
+    private lateinit var scrollCurrentCaption: ScrollView
+    private lateinit var tvCurrentCaption: TextView
+    private lateinit var tvLatestSpeaker: TextView
+    private var renderedCurrentId: CaptionId? = null
+    private var renderedCurrentText = ""
+    private var renderedSpeaker = ""
+    private var renderedSpeakerColor = 0
     private lateinit var btnSettings: ImageButton
     private lateinit var btnMain: Button
     private lateinit var btnLatest: Button
@@ -85,10 +97,10 @@ class MainActivity : AppCompatActivity() {
     private var autoScrolling = false
     private var touchStartY = 0f
     private var renderAfterTouch = false
-    private var renderedLines = emptyList<CaptionBus.SubtitleLine>()
+    private var renderedLines = emptyList<CaptionLine>()
     private var renderedStarts = IntArray(0)
     private var pendingAnchor: CaptionAnchor? = null
-    private data class CaptionAnchor(val line: CaptionBus.SubtitleLine, val offset: Int, val pixels: Int)
+    private data class CaptionAnchor(val id: CaptionId, val offset: Int, val pixels: Int)
     private var permissionTicket: SessionPolicy.VisibilityTicket? = null
     private var envAlertJob: Job? = null
     private var previewRenderJob: Job? = null
@@ -131,6 +143,9 @@ class MainActivity : AppCompatActivity() {
         tvSubtitles = findViewById(R.id.tvSubtitles)
         tvEnvAlert = findViewById(R.id.tvEnvAlert)
         scrollSubtitles = findViewById(R.id.scrollSubtitles)
+        scrollCurrentCaption = findViewById(R.id.scrollCurrentCaption)
+        tvCurrentCaption = findViewById(R.id.tvCurrentCaption)
+        tvLatestSpeaker = findViewById(R.id.tvLatestSpeaker)
         btnSettings = findViewById(R.id.btnSettings)
         btnMain = findViewById(R.id.btnMain)
         btnLatest = findViewById(R.id.btnLatest)
@@ -506,7 +521,8 @@ class MainActivity : AppCompatActivity() {
                 if (position != Settings.getAsrMode(this@MainActivity)) {
                     Settings.setAsrMode(this@MainActivity, position)
                     updatePreviewControls()
-                    if (position != Settings.ASR_REALTIME) CaptionBus.setPartial("")
+                    previewRenderJob?.cancel()
+                    renderSubtitles()
                     AppSessionController.restartCaption()
                 }
             }
@@ -561,7 +577,7 @@ class MainActivity : AppCompatActivity() {
                         }
                         tvStatus.setTextColor(getColor(if (status == EngineStatus.STARTING || status == EngineStatus.RECOGNIZING)
                             R.color.accent else R.color.text_secondary))
-                        renderSubtitles()
+                        renderStartupCaption()
                     }
                 }
                 launch {
@@ -577,9 +593,8 @@ class MainActivity : AppCompatActivity() {
                 launch { CaptionBus.error.collect { message ->
                     if (message != null) tvStatus.text = message
                 } }
-                launch { CaptionBus.subtitles.collect { renderSubtitles(true) } }
-                launch { CaptionBus.startMsg.collect { renderSubtitles() } }
-                launch { CaptionBus.partial.collect { schedulePreviewRender() } }
+                launch { CaptionBus.captions.collect { scheduleCaptionRender(it) } }
+                launch { CaptionBus.startMsg.collect { renderStartupCaption() } }
                 launch {
                     CaptionBus.envEvent.collect { event ->
                         envAlertJob?.cancel()
@@ -602,22 +617,37 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun schedulePreviewRender() {
-        if (!Settings.isPreviewEnabled(this)) return
-        if (CaptionBus.partial.value.isEmpty()) {
+    private fun scheduleCaptionRender(snapshot: CaptionSnapshot) {
+        val presentation = snapshot.presentation(previewEnabled())
+        val latest = presentation.latest
+        val onlyCurrentPreview = latest != null &&
+            presentation.history.map { it.copy(phase = CaptionPhase.FINAL) } == renderedLines &&
+            latest.id == renderedCurrentId && latest.phase == CaptionPhase.PREVIEW &&
+            renderedSpeaker == (latest.speaker?.takeIf { it.isNotBlank() } ?: getString(R.string.latest_caption_title))
+        if (!onlyCurrentPreview) {
             previewRenderJob?.cancel()
             renderSubtitles()
             return
         }
         if (previewRenderJob?.isActive == true) return
         previewRenderJob = lifecycleScope.launch {
-            val remaining = Settings.getPreviewInterval(this@MainActivity).toLong() - (SystemClock.elapsedRealtime() - lastPreviewRender)
+            val remaining = Settings.getPreviewInterval(this@MainActivity).toLong() -
+                (SystemClock.elapsedRealtime() - lastPreviewRender)
             if (remaining > 0) delay(remaining)
             if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
                 lastPreviewRender = SystemClock.elapsedRealtime()
                 renderSubtitles()
             }
         }
+    }
+
+    private fun previewEnabled(): Boolean =
+        Settings.isPreviewEnabled(this) && Settings.getAsrMode(this) == Settings.ASR_REALTIME
+
+    private fun renderStartupCaption() {
+        if (CaptionBus.status.value == EngineStatus.STARTING) {
+            showCurrentCaption(null, CaptionBus.startMsg.value.ifEmpty { getString(R.string.starting_hint) }, null, 0)
+        } else if (renderedCurrentId == null) renderSubtitles()
     }
 
     @Suppress("ClickableViewAccessibility")
@@ -687,7 +717,7 @@ class MainActivity : AppCompatActivity() {
                     } else if (!scrollPolicy.followLatest && anchor != null) {
                         val layout = tvSubtitles.layout
                         if (layout != null) {
-                            val index = renderedLines.indexOfFirst { it === anchor.line }
+                            val index = renderedLines.indexOfFirst { it.id == anchor.id }
                             val offset = if (index >= 0) {
                                 (renderedStarts[index] + anchor.offset).coerceIn(0, tvSubtitles.length())
                             } else 0 // 回看的行已从200条历史中淘汰，停在最早仍保留的行。
@@ -711,54 +741,67 @@ class MainActivity : AppCompatActivity() {
         val offset = layout.getLineStart(row)
         val index = renderedStarts.indexOfLast { it <= offset }.coerceAtLeast(0)
         if (index !in renderedLines.indices) return null
-        return CaptionAnchor(renderedLines[index], offset - renderedStarts[index], y - layout.getLineTop(row))
+        return CaptionAnchor(renderedLines[index].id, offset - renderedStarts[index], y - layout.getLineTop(row))
     }
 
-    private fun renderSubtitles(scrollToBottom: Boolean = false) {
-        if (scrollToBottom) previewRenderJob?.cancel()
-        // 拖动回看时不重排文字；松手再渲染最新状态并恢复同一阅读锚点。
+    private fun renderSubtitles() {
+        val presentation = CaptionBus.captions.value.presentation(previewEnabled())
+        val latest = presentation.latest
+        if (CaptionBus.status.value == EngineStatus.STARTING) renderStartupCaption()
+        else showCurrentCaption(latest?.id, latest?.text ?: getString(R.string.initial_hint), latest?.speaker, latest?.color ?: 0)
+
+        // 当前句的定稿和状态变化不重排历史，也不请求历史滚动。
+        val history = presentation.history.map { it.copy(phase = CaptionPhase.FINAL) }
+        if (history == renderedLines) return
         if (touchingCaptions) {
             renderAfterTouch = true
             return
         }
         renderAfterTouch = false
         val anchor = pendingAnchor ?: captionAnchor()
-        if (CaptionBus.status.value == EngineStatus.STARTING) {
-            pendingAnchor = null
-            renderedLines = emptyList()
-            renderedStarts = IntArray(0)
-            tvSubtitles.text = CaptionBus.startMsg.value.ifEmpty { getString(R.string.starting_hint) }
-            requestCaptionScroll()
-            return
+        val starts = IntArray(history.size)
+        val text = SpannableStringBuilder()
+        history.forEachIndexed { index, line ->
+            if (index > 0) text.append("\n")
+            val start = text.length
+            starts[index] = start
+            if (line.speaker != null) text.append("${line.speaker}：")
+            text.append(line.text)
+            val normal = getColor(R.color.text_primary)
+            text.setSpan(ForegroundColorSpan(CaptionColorPolicy.body(line.color, false, normal,
+                getColor(R.color.caption_latest))), start, text.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-        val lines = CaptionBus.subtitles.value
-        val partial = if (Settings.isPreviewEnabled(this) && Settings.getAsrMode(this) == Settings.ASR_REALTIME)
-            CaptionBus.partial.value else ""
-        val starts = IntArray(lines.size)
-        if (lines.isEmpty() && partial.isEmpty()) tvSubtitles.setText(R.string.initial_hint)
-        else {
-            val text = SpannableStringBuilder()
-            lines.forEachIndexed { index, line ->
-                if (index > 0) text.append("\n")
-                val start = text.length
-                starts[index] = start
-                if (line.speaker != null) text.append("${line.speaker}：")
-                text.append(line.text)
-                text.setSpan(ForegroundColorSpan(if (line.color != 0) line.color else getColor(R.color.text_primary)),
-                    start, text.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-            }
-            if (partial.isNotEmpty()) {
-                if (text.isNotEmpty()) text.append("\n")
-                val start = text.length
-                text.append(partial)
-                text.setSpan(ForegroundColorSpan(getColor(R.color.accent)), start, text.length,
-                    android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-            }
-            tvSubtitles.text = text
-        }
-        renderedLines = lines
+        tvSubtitles.text = text
+        renderedLines = history
         renderedStarts = starts
         pendingAnchor = if (scrollPolicy.followLatest) null else anchor
         requestCaptionScroll()
     }
+
+    /** 同一ID定稿只改本区正文，不移动到其他View、不清空、不滚动历史。 */
+    private fun showCurrentCaption(id: CaptionId?, text: String, speaker: String?, color: Int) {
+        val sentenceChanged = id != renderedCurrentId
+        val contentChanged = text != renderedCurrentText
+        if (contentChanged) {
+            tvCurrentCaption.text = text
+            renderedCurrentText = text
+        }
+        val speakerText = speaker?.takeIf { it.isNotBlank() } ?: getString(R.string.latest_caption_title)
+        val speakerColor = CaptionColorPolicy.speaker(color, getColor(R.color.text_secondary))
+        if (speakerText != renderedSpeaker) {
+            tvLatestSpeaker.text = speakerText
+            renderedSpeaker = speakerText
+        }
+        if (speakerColor != renderedSpeakerColor) {
+            tvLatestSpeaker.setTextColor(speakerColor)
+            renderedSpeakerColor = speakerColor
+        }
+        renderedCurrentId = id
+        if (sentenceChanged) {
+            scrollCurrentCaption.doOnPreDraw {
+                if (renderedCurrentId == id && !isDestroyed) scrollCurrentCaption.scrollTo(0, 0)
+            }
+        }
+    }
+
 }
